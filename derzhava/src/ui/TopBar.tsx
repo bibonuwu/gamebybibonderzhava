@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { availableTechs, buildCost, enemiesOf, techCost } from '../game/actions';
 import { BUILDING_TYPES } from '../game/defs';
 import { STATS } from '../game/economy';
+import { isFree } from '../game/elections';
 import type { GameState } from '../game/types';
 import { fmt, fmtDate, fmtRate } from '../game/format';
 import { getGame, headlines, type Headline } from '../game/state';
@@ -76,6 +77,11 @@ export function TopBar() {
         <button class={`st-chip ${wars > 0 ? 'war' : ''}`} onClick={() => setUI({ tab: 'army' as Tab })} title={wars > 0 ? 'Идёт война' : 'Военная мощь'}>
           {wars > 0 ? '🔥' : '⚔️'} <b>{fmt(s.power)}</b>
         </button>
+        {g.elections.campaign && isFree(c.gov) && (
+          <button class={`st-chip ${g.elections.approval >= 50 ? '' : 'war'}`} onClick={() => setUI({ tab: 'policy' as Tab, policyTab: 'power' })} title="Выборы: рейтинг власти">
+            🗳️ <b>{Math.round(g.elections.approval)}%</b>
+          </button>
+        )}
         <span class="grow" />
         <div class="time-ctl">
           <button class={ui.paused ? 'on' : ''} onClick={() => setUI({ paused: !ui.paused })} aria-label="Пауза" title="Пауза (пробел)">

@@ -5,6 +5,8 @@ import {
 import { attackPerSoldier, computeAll, pairKey, PORT_TILES, regionDefense, regionWeight, STATS } from './economy';
 import { banner, celebrate, fx, log, mapDirty, news, rand, sfx } from './state';
 import type { BuildingType, GameState, PairState } from './types';
+import { coalitionBuildBlock, coalitionWarBlock } from './elections';
+import { brothers, onBrotherWar, onLodgeDestroyed } from './lodge';
 import { endWar, fearsUN, isAggressor, joinCoalition, liberatedOwner, onConquest, onDestroyed, openCase, sanctions, warJustice } from './un';
 import {
   COLS, COUNTRY_DEFS, NEIGH, REGIONS, REGION_OF, adjacentWaters, hexDist, isCoastalTile, isWater, terrainOf,
@@ -89,7 +91,7 @@ export function placeError(g: GameState, ci: number, tile: number, type: Buildin
   if (def.nearCity !== undefined && hexDist(tile, REGIONS[rid].center) > def.nearCity) return 'Слишком далеко от центра региона';
   if (def.coastal && !isCoastalTile(tile)) return 'Нужно побережье';
   if (def.fortress && ter !== 'm' && !isBorderTile(g, tile)) return 'Только горы или граница';
-  return null;
+  return coalitionBuildBlock(g, ci, type);
 }
 
 export function startBuild(g: GameState, ci: number, tile: number, type: BuildingType): string | null {
@@ -356,6 +358,7 @@ function destroyCountry(g: GameState, ci: number, by: number) {
   g.battles = g.battles.filter((b) => b.att !== ci && b.def !== ci);
   if (c.project) c.project = undefined;
   onDestroyed(g, ci);
+  onLodgeDestroyed(g, ci);
   if (ci === g.player) {
     g.gameOver = true;
     sfx('defeat');
@@ -376,7 +379,7 @@ export function warError(g: GameState, a: number, b: number): string | null {
   if (p.truce && p.truce > g.day) return `Перемирие ещё ${Math.ceil(p.truce - g.day)} дн.`;
   if (a !== g.player && g.day < WAR_GRACE_DAYS) return 'Рано';
   if (b === g.player && g.day < PLAYER_GRACE[g.difficulty]) return 'Рано';
-  return null;
+  return coalitionWarBlock(g, a);
 }
 
 export function declareWar(g: GameState, a: number, b: number, chain = true): string | null {
@@ -401,6 +404,7 @@ export function declareWar(g: GameState, a: number, b: number, chain = true): st
   addRel(g, a, b, -50);
   if (!justice.just) g.countries.forEach((c, i) => { if (c.alive && i !== a && i !== b) addRel(g, a, i, -4); });
   g.countries[a].aiFlags.lastWarDay = g.day;
+  if (a === g.player) g.counters.warsDeclared = (g.counters.warsDeclared ?? 0) + 1;
   if (involvesPlayer(g, a, b)) sfx('war');
   if (b === g.player) {
     log(g, `⚔️ ${cname(g, a)} объявляет вам войну!`, 'war', false);
@@ -429,6 +433,7 @@ export function declareWar(g: GameState, a: number, b: number, chain = true): st
   }
   if (vsAggressor) joinCoalition(g, a, b);
   else if (!justice.just) openCase(g, a, b, treachery);
+  if (brothers(g, a, b)) onBrotherWar(g, a, b);
   computeAll(g);
   return null;
 }
@@ -608,6 +613,7 @@ export function willAccept(g: GameState, a: number, b: number, kind: DiploKind):
   if (per === 'aggressor') need += kind === 'trade' ? 10 : 25;
   if (per === 'fanatic' && g.countries[a].religion !== g.countries[b].religion) need += 15;
   if (kind !== 'trade' && sharedFoe(g, a, b) >= 0) need -= 25;
+  if (brothers(g, a, b)) need -= 15; // братья по ложе договариваются легче
   if (kind === 'trade' && STATS[b].tradePartners >= maxTrade(g, b)) return false;
   if (sanctions(g, b, a)) return false; // кто ввёл санкции, с агрессором договоров не заключает
   return g.rel[a][b] >= need;

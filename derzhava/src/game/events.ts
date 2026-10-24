@@ -2,6 +2,9 @@
 import { addRel, atWar, enemiesOf, neighborCountries } from './actions';
 import { INVEST_PER } from './defs';
 import { computeAll, STATS } from './economy';
+import { resolveDebtEvent } from './debt';
+import { resolveElectionEvent } from './elections';
+import { resolveLodgeEvent } from './lodge';
 import { resolveDemand } from './people';
 import { adoptGenius, companiesOf, geniusText } from './society';
 import { log, pick, rand, sfx } from './state';
@@ -279,6 +282,9 @@ export function resolveEvent(g: GameState, option: number) {
   if (!g.event) return;
   if (g.event.kind === 'demand') return resolveDemand(g, option);
   if (g.event.kind === 'un') return voteUN(g, option);
+  if (g.event.kind === 'lodge') return resolveLodgeEvent(g, option);
+  if (g.event.kind === 'election') return resolveElectionEvent(g, option);
+  if (g.event.kind === 'debt') return resolveDebtEvent(g, option);
   const ev = EVENTS.find((e) => e.id === g.event!.id);
   const opt = ev?.options[option];
   const t = g.event.target ?? -1;

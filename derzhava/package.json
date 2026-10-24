@@ -14,11 +14,13 @@
     "sim": "tsx scripts/sim-test.ts",
     "app": "npm run build && electron .",
     "exe": "npm run build && electron-builder --win",
-    "icon": "electron scripts/make-icon.cjs"
+    "icon": "electron scripts/make-icon.cjs",
+    "icons": "node scripts/build-icons.mjs"
   },
   "devDependencies": {
     "@fontsource/cormorant-sc": "5.3.0",
     "@fontsource/pt-sans": "5.3.0",
+    "@iconify-json/game-icons": "1.2.4",
     "@preact/preset-vite": "2.10.6",
     "electron": "44.9.3",
     "electron-builder": "26.17.0",
@@ -33,12 +35,28 @@
   "build": {
     "appId": "com.derzhava.game",
     "productName": "Держава",
-    "files": ["dist/**/*", "electron/**/*", "package.json"],
-    "directories": { "output": "release" },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release"
+    },
     "win": {
       "target": [
-        { "target": "nsis", "arch": ["x64"] },
-        { "target": "portable", "arch": ["x64"] }
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
       "icon": "electron/icon.png"
     },

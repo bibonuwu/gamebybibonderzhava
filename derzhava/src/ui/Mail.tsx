@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { fmtDate } from '../game/format';
 import { answerLetter, claimLetter, giftParts, readLetter, unreadMail } from '../game/mail';
-import { emit, getGame, sfx } from '../game/state';
+import { emit, getGame, sfx, toast } from '../game/state';
 import type { GameState, Letter } from '../game/types';
 import { LetterArt } from './mailArt';
 import { prefs, report, setUI, ui, useStore } from './store';
@@ -153,6 +153,34 @@ function LetterView({ L }: { L: Letter }) {
   }, []);
   const nextUnread = g.mail.find((l) => !l.read && l.id !== L.id);
   const gift = L.gift;
+  // после ответа (и забранного подарка) письмо само уходит: к следующему непрочитанному или закрывается
+  const [auto, setAuto] = useState(false);
+  useEffect(() => {
+    if (!auto) return;
+    const t = setTimeout(() => {
+      const next = g.mail.find((l) => !l.read && l.id !== L.id);
+      if (next) open(next.id);
+      else setUI({ modal: null });
+    }, 1400);
+    return () => clearTimeout(t);
+  }, [auto]);
+  const settle = () => {
+    if (L.replies && L.answered === undefined) return;
+    if (L.gift && !L.claimed) return;
+    setAuto(true);
+  };
+  const answer = (i: number) => {
+    const err = answerLetter(g, L.id, i);
+    if (err) return report(err);
+    if (L.result) toast(`✉️ ${L.result}`, 'info');
+    emit();
+    settle();
+  };
+  const claim = () => {
+    const err = claimLetter(g, L.id);
+    report(err, `🎁 ${gift!.label}`);
+    if (!err && L.replies) settle();
+  };
   return (
     <div class={`letter-stage ${opening ? 'opening' : ''}`}>
       {opening && (
@@ -191,7 +219,7 @@ function LetterView({ L }: { L: Letter }) {
               <b>📎 {gift.label}</b>
               <span class="small">{giftParts(gift).join(' · ')}</span>
             </span>
-            {!L.claimed && <button class="btn sm green shine" onClick={() => report(claimLetter(g, L.id), `🎁 ${gift.label}`)}>Забрать</button>}
+            {!L.claimed && <button class="btn sm green shine" onClick={claim}>Забрать</button>}
           </div>
         )}
         {L.replies && (
@@ -199,7 +227,7 @@ function LetterView({ L }: { L: Letter }) {
             <div class="lr-title">✍️ {L.answered === undefined ? 'Ваш ответ' : 'Вы ответили'}</div>
             {L.answered === undefined ? (
               L.replies.map((r, i) => (
-                <button key={i} class="btn ev-opt lr-opt" style={{ animationDelay: `${(opening ? 1.3 : 0.2) + i * 0.07}s` }} onClick={() => report(answerLetter(g, L.id, i))}>
+                <button key={i} class="btn ev-opt lr-opt" style={{ animationDelay: `${(opening ? 1.3 : 0.2) + i * 0.07}s` }} onClick={() => answer(i)}>
                   <span>{r.label}</span>
                   <span class="h">{r.hint}</span>
                 </button>

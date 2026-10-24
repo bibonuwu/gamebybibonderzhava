@@ -1,7 +1,11 @@
 import { ARMS_BASE, FOOD_BASE, PERSONALITY_KEYS } from './defs';
 import { computeAll, STATS } from './economy';
+import { BASE_RATE } from './debt';
+import { initElections } from './elections';
+import { initLodge } from './lodge';
 import { newGood } from './market';
 import { initSociety } from './society';
+import { initIntel } from './spy';
 import { log, rand } from './state';
 import type { Country, Difficulty, GameState, Personality } from './types';
 import { COUNTRY_DEFS, REGIONS, continentFactor } from './world';
@@ -23,6 +27,10 @@ export function newGame(player: number, difficulty: Difficulty, seed = Date.now(
     missiles: [],
     fallout: {},
     un: [],
+    lodge: null!, // ложа, выборы и разведка создаются ниже, когда известны страны
+    elections: null!,
+    intel: null!,
+    finance: { base: BASE_RATE, shock: 0, nextCrisis: 1800 + Math.floor((seed >>> 3) % 1200) },
     nextId: 1,
     log: [],
     proposals: [],
@@ -33,7 +41,7 @@ export function newGame(player: number, difficulty: Difficulty, seed = Date.now(
     quests: [],
     mail: [],
     mailSeen: [],
-    nextMailDay: 30,
+    nextMailDay: 45,
     companies: [],
     geniuses: [],
     market: { food: newGood(FOOD_BASE), arms: newGood(ARMS_BASE), sciPool: 0, sciNorm: 1, nextGenius: 20, nextShock: 400 },
@@ -90,6 +98,10 @@ export function newGame(player: number, difficulty: Difficulty, seed = Date.now(
     arms: d.army * 1000,
     aiFlags: {},
   }));
+
+  g.lodge = initLodge(g);
+  g.elections = initElections(g);
+  g.intel = initIntel(g);
 
   // население регионов
   g.regions = REGIONS.map((r) => ({ owner: r.origOwner, pop: 0, cap0: 0, agri: 0 }));

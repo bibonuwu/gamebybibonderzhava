@@ -1,5 +1,9 @@
+import { BASE_RATE } from './debt';
+import { initElections } from './elections';
+import { initLodge } from './lodge';
 import { SAVE_VERSION } from './newGame';
 import { initSociety } from './society';
+import { initIntel } from './spy';
 import type { GameState } from './types';
 import { REGIONS } from './world';
 
@@ -25,6 +29,10 @@ export function loadGame(): GameState | null {
     g.missiles ??= [];
     g.fallout ??= {};
     g.un ??= [];
+    g.lodge ??= initLodge(g);
+    g.elections ??= initElections(g);
+    g.intel ??= initIntel(g);
+    g.finance ??= { base: BASE_RATE, shock: 0, nextCrisis: g.day + 1800 };
     // санкции и коалиции прежней версии ООН: без дела в g.un они не кончились бы никогда
     for (const c of g.countries) c.mods = c.mods.filter((m) => m.label !== 'Санкции ООН');
     for (const p of Object.values(g.pairs)) if (p.war?.un !== undefined && !g.un.some((cs) => cs.aggressor === p.war!.un)) delete p.war.un;

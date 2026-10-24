@@ -3,6 +3,7 @@ import { DIFFICULTY, GOVS } from '../game/defs';
 import { fmt, fmtDate } from '../game/format';
 import { newGame } from '../game/newGame';
 import { hasSave, loadGame } from '../game/save';
+import { lodgeKnown } from '../game/lodge';
 import { getGame, setGame } from '../game/state';
 import type { Difficulty, GameState } from '../game/types';
 import { COUNTRY_DEFS, REGIONS, REGION_OF, isWater } from '../game/world';
@@ -11,12 +12,14 @@ import { Card, Flag, Seg, Tabs } from './common';
 import { PanelFrame, trackTab } from './PanelFrame';
 import { PanelHero } from './PanelHero';
 import { AudioSettings } from './AudioSettings';
-import { MapControls, useHotkeys } from './Controls';
+import { useHotkeys } from './Controls';
 import { MailButton } from './Mail';
 import { Banners, Modals, ProposalCard, QuestButton, Toasts } from './Modals';
 import { ArmyPanel } from './panels/ArmyPanel';
 import { BuildPanel } from './panels/BuildPanel';
 import { DiploPanel } from './panels/DiploPanel';
+import { LodgePanel } from './panels/LodgePanel';
+import { SpyPanel } from './panels/SpyPanel';
 import { MarketPanel } from './panels/MarketPanel';
 import { PolicyPanel } from './panels/PolicyPanel';
 import { StatsPanel } from './panels/StatsPanel';
@@ -64,7 +67,6 @@ export function App({ map }: { map: MapView }) {
       {ui.tab === 'map' && ui.tile >= 0 && <TileSheet map={map} />}
       <QuestButton />
       <MailButton />
-      <MapControls map={map} />
       <ProposalCard />
       <BottomNav />
       <Toasts />
@@ -74,21 +76,30 @@ export function App({ map }: { map: MapView }) {
   );
 }
 
-/** Армия и дипломатия — одна вкладка: война и мир в одном месте. */
+/** Армия, дипломатия, тайная ложа и разведка — одна вкладка: война и мир в одном месте. */
 function WarAndPeace({ map }: { map: MapView }) {
-  const n = getGame()!.proposals.length;
+  const g = getGame()!;
+  const n = g.proposals.length;
+  const lodge = lodgeKnown(g);
+  const tab = ui.armyTab === 'lodge' && !lodge ? 'army' : ui.armyTab;
   return (
     <>
       <PanelHero kind="army" />
       <Tabs<ArmyTab>
-        value={ui.armyTab}
+        compact={lodge}
+        value={tab}
         onChange={(v) => setUI({ armyTab: v })}
         options={[
           { v: 'army', label: '⚔️ Армия' },
           { v: 'diplo', label: n ? `🤝 Дипломатия (${n})` : '🤝 Дипломатия' },
+          { v: 'spy', label: '🕵️ Разведка' },
+          ...(lodge ? [{ v: 'lodge' as const, label: '👁️ Ложа' }] : []),
         ]}
       />
-      {ui.armyTab === 'army' ? <ArmyPanel map={map} /> : <DiploPanel map={map} />}
+      {tab === 'army' && <ArmyPanel map={map} />}
+      {tab === 'diplo' && <DiploPanel map={map} />}
+      {tab === 'spy' && <SpyPanel />}
+      {tab === 'lodge' && <LodgePanel />}
     </>
   );
 }
@@ -229,6 +240,7 @@ function StartScreen({ map }: { map: MapView }) {
             <div>🟢 Зелёная точка на вкладке — там можно что-то сделать прямо сейчас.</div>
             <div>🤝 Заключайте договоры с другими странами — торговля сразу добавит дохода. Или ⚔️ воюйте за их земли.</div>
             <div>☢️ Изучите ветку «Атом» в науке — с ядерной бомбой на вас побоятся нападать (вкладка «Армия»).</div>
+            <div>🗳️ В демократии и республике бывают выборы, 🏦 деньги можно занять под процент («Политика»), 🕵️ разведка — во вкладке «Армия».</div>
             <div>📋 Выполняйте задания (кнопка на карте) — за них дают награды.</div>
             <div>❔ Нажмите «?» у любой карточки — там подсказка.</div>
             <div>⌨️ На ПК: пробел — пауза, 1–6 — вкладки, WASD — карта, Esc — меню.</div>

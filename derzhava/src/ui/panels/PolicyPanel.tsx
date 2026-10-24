@@ -4,7 +4,9 @@ import { availableTechs, fundamentalCost, research, researchFundamental, techCos
 import {
   BIRTH_POLICY, BUDGET_COST, BUDGET_INFO, BUDGET_LEVELS, GOVS, MIGRATION, RELIGIONS, TECHS, TECH_BRANCHES,
 } from '../../game/defs';
+import { IMF_BUDGET, IMF_TAX, pct } from '../../game/debt';
 import { computeAll, STATS } from '../../game/economy';
+import { coalitionBounds, coalitionParty, PARTY_BY_ID } from '../../game/elections';
 import { fmt, fmtDate, fmtDays } from '../../game/format';
 import { moodOf } from '../../game/people';
 import { inviteInvestors, investorsCost, investorsError, richTax, richTaxError, richTaxGain } from '../../game/society';
@@ -12,6 +14,8 @@ import { emit, getGame, log } from '../../game/state';
 import type { BudgetKey, GovType, ReligionPolicy } from '../../game/types';
 import { Bar, Card, KV, More, Rate, Seg, Tabs } from '../common';
 import { PanelHero } from '../PanelHero';
+import { DebtCard } from './DebtCard';
+import { ElectionsCard } from './ElectionsCard';
 import { report, setUI, ui, useStore, type PolicyTab } from '../store';
 
 type Sub = PolicyTab;
@@ -67,6 +71,10 @@ export function IncomeTable() {
     ['👶 Поддержка семей', -s.birthCost],
     ['🔧 Содержание зданий', -s.upkeepBuildings],
     ['💂 Содержание армии', -s.upkeepArmy],
+    ['🔺 Взносы ложи', -s.lodgeDues],
+    ['👁️ Десятина ложи', s.lodgeTithe],
+    ['🏦 Проценты по долгу', -s.debtInterest],
+    ['🕵️ Контрразведка', -s.intelCost],
   ];
   return (
     <KV
@@ -85,21 +93,32 @@ function Economy() {
   const g = getGame()!;
   const c = g.countries[g.player];
   const s = STATS[g.player];
+  const party = coalitionParty(g);
   const setBudget = (k: BudgetKey, v: number) => {
-    c.budget[k] = v;
-    refresh();
+    // коалиция не даёт выйти за свои рамки, МВФ — предупреждает
+    const [lo, hi] = coalitionBounds(g, k);
+    if (v < lo || v > hi) return report(`Коалиция с партией «${PARTY_BY_ID[party!].name}» не позволит: ${PARTY_BY_ID[party!].terms}`);
+    const apply = () => { c.budget[k] = v; refresh(); };
+    if (c.imf && v > IMF_BUDGET && c.budget[k] <= IMF_BUDGET) {
+      return setUI({ modal: { kind: 'confirm', danger: true, title: '🏦 Нарушить условия МВФ?', okText: 'Всё равно поднять',
+        text: `По программе МВФ расходы не выше «${BUDGET_LEVELS[IMF_BUDGET]}». Если не вернуть как было за 30 дней, программу прервут: долг станет рыночным, рейтинг упадёт.`, ok: apply } });
+    }
+    apply();
   };
+  const taxMax = Math.round(coalitionBounds(g, 'tax')[1] * 100);
   return (
     <>
       <Card title="🏛️ Налоги" sub={`${Math.round(c.tax * 100)}%`} hint="Выше 15% люди начинают злиться (сильнее при демократии).">
         <input
-          type="range" min={0} max={50} step={1} value={Math.round(c.tax * 100)}
+          type="range" min={0} max={taxMax} step={1} value={Math.round(c.tax * 100)}
           onInput={(e) => { c.tax = +(e.currentTarget as HTMLInputElement).value / 100; refresh(); }}
         />
         <div class="row between small">
           <span class="muted">Доход: <Rate v={s.taxIncome} /></span>
           <span class="muted">Стабильность: <b class={c.tax > 0.15 ? 'down' : 'up'}>{(s.stabParts.find((p) => p[0] === 'Налоги')?.[1] ?? 0).toFixed(1)}</b></span>
         </div>
+        {taxMax < 50 && <div class="small muted" style={{ marginTop: '4px' }}>🤝 Коалиция: налог не выше {taxMax}%</div>}
+        {c.imf && <div class={`small ${c.tax < IMF_TAX ? 'down' : 'muted'}`} style={{ marginTop: '4px' }}>🏦 МВФ: налог не ниже {pct(IMF_TAX)}</div>}
       </Card>
       <Card title="📋 Бюджет" hint={<>{(Object.keys(BUDGET_INFO) as BudgetKey[]).map((k) => <div key={k}>{BUDGET_INFO[k].icon} <b>{BUDGET_INFO[k].name}</b> — {BUDGET_INFO[k].hint}</div>)}<div>Процент — доля от налогов.</div></>}>
         <div class="col">
@@ -114,6 +133,7 @@ function Economy() {
           ))}
         </div>
       </Card>
+      <DebtCard />
       <Card title="💰 Доходы и расходы" sub={<Rate v={s.moneyRate} />} fold="policy-income">
         <IncomeTable />
       </Card>
@@ -265,6 +285,7 @@ function Power() {
   };
   return (
     <>
+      <ElectionsCard />
       <Card title="👑 Форма правления" sub={cooldown > 0 ? `реформа через ${fmtDays(cooldown)}` : 'можно реформировать'}>
         <div class="col">
           {(Object.keys(GOVS) as GovType[]).map((k) => (

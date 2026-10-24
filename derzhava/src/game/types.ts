@@ -71,11 +71,70 @@ export interface Country {
   nukes?: number; // готовые ядерные боеголовки
   nukeBuild?: { left: number; total: number }; // сборка боеголовки
   nukeTested?: boolean; // первое испытание проведено
+  // госдолг (debt.ts)
+  debt?: number; // облигации на рынке
+  debtRate?: number; // годовая ставка по ним — от кредитного рейтинга
+  imf?: ImfProgram; // программа МВФ
+  defaulted?: number; // до этого дня рейтинг «D» после дефолта
+  imfBan?: number; // до этого дня МВФ не даёт денег
+  imfBroken?: number; // до этого дня рейтинг ниже: страна сорвала программу МВФ
+  counterIntel?: number; // контрразведка 0…3 (spy.ts)
   aiFlags: {
     reformed?: boolean; lastWarDay?: number; lastProposalDay?: number; lastAnnex?: number; nextAttack?: number;
     prepTarget?: number; prepUntil?: number; // подготовка к войне: закупки и мобилизация
     lastDemand?: number; lastCompany?: number; lastRichTax?: number;
+    nextVote?: number; voteBias?: number; // выборы бота и вмешательство чужих спецслужб
+    lastSpy?: number;
   };
+}
+
+/** Программа МВФ: дешёвый кредит в обмен на строгий бюджет. */
+export interface ImfProgram {
+  loan: number; // долг МВФ
+  until: number; // конец программы
+  warn?: number; // день, когда условия нарушены: через 30 дней программу прервут
+}
+
+/** Обещание кампании: до выборов поднимает рейтинг, после победы его надо выполнить за год. */
+export interface ElectionPromise {
+  kind: string;
+  target: number;
+  base: number; // значение в день обещания
+  until?: number; // срок выполнения (после победы)
+}
+
+/** Выборы игрока (elections.ts). */
+export interface ElectionState {
+  next: number; // день выборов
+  approval: number; // рейтинг власти, %
+  forGov?: string; // для какой формы правления назначены
+  party: string; // главная оппозиционная партия
+  leader: string;
+  promise?: ElectionPromise; // обещание кампании
+  offers?: ElectionPromise[]; // обещания, предложенные в окне кампании
+  mandate?: ElectionPromise; // обещание, которое надо выполнить после победы
+  boost: number; // очки кампании: агитация, дебаты, обещание
+  trust: number; // доверие: сдержанные и нарушенные обещания, скандалы — со временем забывается
+  cd: Record<string, number>; // действие кампании → день, когда снова можно
+  rigged?: number; // «дорисовано» голосов
+  campaign?: boolean; // кампания объявлена
+  coalition?: { party: string; until: number }; // проиграли — условия партии-победителя
+  last?: { day: number; ours: number; won: boolean };
+}
+
+/** Спецслужбы (spy.ts). */
+export interface IntelState {
+  net: number[][]; // net[a][b] — сеть агентов a в стране b, 0…100
+  watch: Record<number, number>; // досье игрока: страна → до какого дня видим всё
+  cd: Record<string, number>; // операция игрока → день, когда снова можно
+  sweep?: number; // день последней зачистки
+}
+
+/** Мировые финансы: базовая ставка и кризисы. */
+export interface FinanceState {
+  base: number; // мировая ставка
+  shock: number; // кризисная надбавка, гаснет со временем
+  nextCrisis: number;
 }
 
 export interface RegionState {
@@ -218,9 +277,43 @@ export interface Proposal {
   expires: number;
 }
 
+/** Как игрок относится к тайной ложе: не знает о ней, состоит, отказался, запретил, изгнан за войну с братом. */
+export type LodgeStatus = 'none' | 'member' | 'refused' | 'banned' | 'expelled';
+
+/** Поручение ложи игроку (см. lodge.ts). */
+export interface LodgeTask {
+  kind: string;
+  target: number;
+  base: number; // значение в день поручения
+  param?: number; // страна-брат или агрессор
+  since: number;
+  until: number;
+  reward: number; // 🔺
+}
+
+/** Тайная ложа «Всевидящее око»: масоны среди правителей мира. */
+export interface LodgeState {
+  members: number[]; // страны-члены, вместе с игроком
+  known: number[]; // члены, чьё масонство раскрыли газеты
+  inf: number[]; // 🔺 влияние в ложе по странам
+  master: number; // Великий мастер (-1 — не избран)
+  status: LodgeStatus;
+  joined?: number;
+  merit: number; // заслуги игрока: от них степень посвящения
+  open?: boolean; // игрок открыто признал членство: разоблачать нечего, но тайные дела злят народ
+  suspicion: number; // 0…100 — насколько газеты близки к разгадке
+  task?: LodgeTask;
+  nextTask: number;
+  cd: Record<string, number>; // услуга → день, когда она снова доступна
+  shield?: number; // до этого дня братья в ООН прикрывают игрока
+  nextElection: number;
+  electionAsked?: boolean;
+  nextPlot: number; // тайные дела ботов-братьев и происки ложи против тех, кто её запретил
+}
+
 export interface PendingEvent {
   id: string;
-  kind?: 'demand' | 'un'; // требование народа или голосование в Совбезе ООН, а не случайное событие
+  kind?: 'demand' | 'un' | 'lodge' | 'election' | 'debt'; // требование народа, Совбез ООН, тайная ложа, выборы или финансы, а не случайное событие
   title: string;
   text: string;
   icon: string;
@@ -292,6 +385,10 @@ export interface GameState {
   missiles: Missile[];
   fallout: Record<number, number>; // регион → день, до которого держится радиоактивное заражение
   un: UNCase[]; // дела ООН об агрессии
+  lodge: LodgeState; // тайная ложа
+  elections: ElectionState; // выборы игрока
+  intel: IntelState; // разведка
+  finance: FinanceState; // мировые финансы
   nextId: number;
   log: LogEntry[];
   proposals: Proposal[];

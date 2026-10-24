@@ -1,7 +1,8 @@
 // Производные показатели стран: доходы, наука, рост населения, стабильность, армия, продовольствие, общество.
 import {
   BASE_MODS, BIRTH_POLICY, BUDGET_COST, BUDGET_INFO, BUILDINGS, BUILDING_TYPES, CORP_YIELD, DIFFICULTY, EDU_SCI, FOOD_PER,
-  GENIUS_FIELDS, GOVS, INVEST_PER, LEVEL_EFFECT, MIGRATION, MIL_ARMS, RELIGIONS, SCI_OUT, SECTOR_KEYS, TECH_BY_ID, type TechMods,
+  GENIUS_FIELDS, GOVS, IMF_RATE, INTEL_COST, INVEST_PER, LEVEL_EFFECT, LODGE_DUES, LODGE_OPEN_STAB, LODGE_TITHE, MIGRATION, MIL_ARMS, RELIGIONS, SCI_OUT,
+  SECTOR_KEYS, TECH_BY_ID, type TechMods,
 } from './defs';
 import type { BuildingType, Country, GameState, Sector } from './types';
 import { wonderMods } from './wonders';
@@ -66,6 +67,11 @@ export interface CountryStats {
   // санкции ООН
   sanctions: number; // на сколько упало производство (0…SANCTION_MAX)
   sanctionLoss: number; // 💰/сек, которых казна недосчитывается
+  // тайная ложа
+  lodgeDues: number; // взносы, 💰/сек
+  lodgeTithe: number; // десятина Великому мастеру от взносов братьев
+  debtInterest: number; // проценты по госдолгу, 💰/сек
+  intelCost: number; // контрразведка, 💰/сек
 }
 
 export let STATS: CountryStats[] = [];
@@ -173,9 +179,11 @@ export function computeAll(g: GameState) {
       deployed: 0, equip: 1, armsProd: 0, gdpIndex: 0, sciTarget: 0, brainsSci: 0, billTarget: 0, investIncome: 0, corpIncome: 0,
       companies: 0, corpValue: 0, sectorUnits: Object.fromEntries(SECTOR_KEYS.map((k) => [k, 0])) as Record<Sector, number>, geniuses: 0,
       foodProd: 0, foodCons: 0, foodBuy: 0, foodSell: 0, foodMoney: 0, hunger: 0, sanctions: 0, sanctionLoss: 0,
+      lodgeDues: 0, lodgeTithe: 0, debtInterest: 0, intelCost: 0,
     });
   }
   const sanc = sanctionPenalty(g, n);
+  const brothers = new Set(g.lodge?.members ?? []);
   REGION_FARM.fill(0);
   REGION_FORT.fill(0);
   PORT_TILES = Array.from({ length: n }, () => []);
@@ -280,6 +288,7 @@ export function computeAll(g: GameState) {
     s.sanctions = sanc[i];
     if (s.sanctions > 0) parts.push(['Санкции ООН', -s.sanctions * 25]);
     if (mods.stab) parts.push(['Технологии и чудеса', mods.stab]);
+    if (i === g.player && g.lodge?.open && brothers.has(i)) parts.push(['Правитель — масон', LODGE_OPEN_STAB[c.religion]]);
     const civ = Math.max(1, s.civPop);
     if (c.gov === 'dictatorship') parts.push(['Страх перед армией', Math.min(10, (c.soldiers / civ) * 1000)]);
     if (c.armyType === 'conscript' && c.soldiers / civ > 0.01) parts.push(['Призыв', -5]);
@@ -319,8 +328,11 @@ export function computeAll(g: GameState) {
       s.tradePartners++;
       s.tradeIncome += tradeWith(g, i, j, s.tradeMult);
     }
+    s.lodgeDues = brothers.has(i) ? Math.max(0, s.taxIncome) * LODGE_DUES : 0;
+    s.debtInterest = ((c.debt ?? 0) * (c.debtRate ?? 0) + (c.imf?.loan ?? 0) * IMF_RATE) / 365;
+    s.intelCost = Math.max(0, s.taxIncome) * INTEL_COST[c.counterIntel ?? 1];
     s.moneyRate = s.taxIncome + s.factoryIncome + s.portIncome + s.tradeIncome + s.corpIncome + s.investIncome + s.foodMoney
-      - s.budgetCost - s.birthCost - s.upkeepBuildings - s.upkeepArmy;
+      - s.budgetCost - s.birthCost - s.upkeepBuildings - s.upkeepArmy - s.lodgeDues - s.debtInterest - s.intelCost;
 
     // наука
     const brainF = rel.brains * gov.brains * mods.brains * (0.8 + (0.2 * c.stability) / 100) * diff * (1 + modSum(g, c, 'brains'));
@@ -346,6 +358,15 @@ export function computeAll(g: GameState) {
     s.quality = c.armyType === 'contract' ? 1.25 : 0.85;
     s.morale = Math.max(0.2, Math.min(1.6, 0.6 + c.stability / 250 + BUDGET_INFO.military.morale[c.budget.military] - c.weariness / 200 + gov.morale));
     s.power = (c.soldiers * s.weapons * s.morale * s.quality * diff) / 1000;
+  }
+
+  // Великий мастер ложи получает часть взносов братьев
+  const gm = g.lodge?.master ?? -1;
+  if (gm >= 0 && brothers.has(gm) && g.countries[gm]?.alive) {
+    let dues = 0;
+    for (const k of brothers) if (k !== gm && g.countries[k]?.alive) dues += stats[k].lodgeDues;
+    stats[gm].lodgeTithe = dues * LODGE_TITHE;
+    stats[gm].moneyRate += stats[gm].lodgeTithe;
   }
 
   // прирост по регионам

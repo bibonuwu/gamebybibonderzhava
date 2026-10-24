@@ -12,6 +12,9 @@ import type { GameState, UNCase } from '../../game/types';
 import {
   aidCost, countriesN, embargoed, forecast, isAggressor, P5, playerAid, playerSanctions, sanctions, victimsOf, warJustice,
 } from '../../game/un';
+import { RATINGS, rating } from '../../game/debt';
+import { brothers, visibleMembers } from '../../game/lodge';
+import { dossier, netOf, watched } from '../../game/spy';
 import { WONDER_BY_ID, wondersOf } from '../../game/wonders';
 import { COUNTRY_DEFS, REGIONS } from '../../game/world';
 import { Bar, Card, Flag, KV, LiveNum, More, Rate, RelBar, relText } from '../common';
@@ -24,6 +27,7 @@ export function DiploPanel({ map }: { map: MapView }) {
   const g = getGame()!;
   const me = g.player;
   const others = g.countries.filter((c) => c.alive && c.idx !== me).sort((a, b) => g.rel[me][b.idx] - g.rel[me][a.idx]);
+  const masons = new Set(visibleMembers(g));
   const neutral = reachableTargets(g, me, true)
     .map((t) => ({ ...t, cost: annexCost(g, me, t.rid) }))
     .sort((a, b) => a.cost - b.cost);
@@ -56,6 +60,7 @@ export function DiploPanel({ map }: { map: MapView }) {
                   {c.aiFlags.prepTarget === me && <span class="chip war">🪖 готовит нападение!</span>}
                   {isAggressor(g, c.idx) && <span class="chip war" title="Напала на другую страну без причины — ООН её осудила">🌐 агрессор</span>}
                   {sanctions(g, me, c.idx) && <span class="chip">🚫 наши санкции</span>}
+                  {masons.has(c.idx) && <LodgeChip id={c.idx} />}
                 </div>
               </div>
               <div style={{ textAlign: 'right' }}>
@@ -101,7 +106,7 @@ export function ProposalRow({ id }: { id: number }) {
   );
 }
 
-export function CountryDialog({ id, map }: { id: number; map: MapView }) {
+export function CountryDialog({ id }: { id: number }) {
   const g = getGame()!;
   const me = g.player;
   const c = g.countries[id];
@@ -127,6 +132,9 @@ export function CountryDialog({ id, map }: { id: number; map: MapView }) {
         <p class="small down" style={{ marginTop: '-6px' }}>
           🕵️ Разведка: {c.aiFlags.prepTarget === me ? 'скупает оружие и готовит нападение на нас!' : `мобилизуется против страны ${COUNTRY_DEFS[c.aiFlags.prepTarget].name}`}
         </p>
+      )}
+      {visibleMembers(g).includes(id) && (
+        <p class="small" style={{ marginTop: '-6px' }}><LodgeChip id={id} /></p>
       )}
       {isAggressor(g, id) && (
         <p class="small down" style={{ marginTop: '-6px' }}>
@@ -154,8 +162,15 @@ export function CountryDialog({ id, map }: { id: number; map: MapView }) {
             ['🌾 Своей еды', s.hunger > 0 ? `голод ${Math.round(s.hunger * 100)}%` : `${Math.round((s.foodProd / Math.max(1, s.foodCons)) * 100)}% от нужного`],
             ...(wondersOf(g, id).length ? [['Чудеса света', wondersOf(g, id).map((w) => w.icon).join(' ')] as [string, string]] : []),
             ...(c.project ? [['Строит чудо', `${WONDER_BY_ID[c.project.id].icon} ${Math.round((1 - c.project.left / c.project.total) * 100)}%`] as [string, string]] : []),
+            ['🏦 Кредитный рейтинг', RATINGS[rating(g, id)]],
           ]} />
         </More>
+        {watched(g, id) && (
+          <div class="spy-dossier">
+            <div class="small muted" style={{ marginBottom: '4px' }}>🔍 Досье разведки</div>
+            <KV rows={dossier(g, id)} />
+          </div>
+        )}
       </div>
       <div class="col">
         {(['trade', 'pact', 'alliance'] as DiploKind[]).map((k) =>
@@ -193,13 +208,21 @@ export function CountryDialog({ id, map }: { id: number; map: MapView }) {
             {warJustice(g, me, id).just ? `✅ Справедливая война: ${warJustice(g, me, id).reason}` : '⚠️ Без причины это агрессия — ООН осудит нас'}
           </div>
         )}
-        <div class="grid2">
-          <button class="btn ghost" onClick={() => { const cap = REGIONS[c.capital].center; close(); setUI({ tab: 'map', tile: cap }); map.select(cap); map.focusTile(cap, 1.3); }}>🗺️ На карте</button>
-          <button class="btn ghost" onClick={close}>Закрыть</button>
-        </div>
+        <button class="btn ghost block" onClick={() => setUI({ modal: null, tab: 'army', armyTab: 'spy', spyTarget: id })}>
+          🕵️ Разведка{netOf(g, me, id) >= 1 ? ` · сеть агентов ${Math.round(netOf(g, me, id))}%` : ''}
+        </button>
+        <button class="btn ghost block" onClick={close}>Закрыть</button>
       </div>
     </>
   );
+}
+
+/** Метка масона: брат по ложе (если мы в ней) или разоблачённый газетами. */
+function LodgeChip({ id }: { id: number }) {
+  const g = getGame()!;
+  const master = g.lodge.master === id;
+  if (brothers(g, g.player, id)) return <span class="chip lodge" title="Брат по тайной ложе: не нападёт на нас и охотнее подпишет договор">👁️ {master ? 'Великий мастер' : 'брат по ложе'}</span>;
+  return <span class="chip lodge" title="Газеты раскрыли: член тайной ложи">👁️ масон</span>;
 }
 
 const many = (n: number, one: string, more: string) => (n % 10 === 1 && n % 100 !== 11 ? one : more);

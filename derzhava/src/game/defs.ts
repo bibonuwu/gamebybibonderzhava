@@ -239,6 +239,18 @@ export const FOOD_SELF: Record<string, number> = {
   ua: 2, tr: 1, ir: 0.8, sa: 0.4, kz: 1.6, pk: 1, jp: 0.6, id: 0.9, eg: 0.6, ng: 0.85, dz: 0.5, za: 1.05, au: 2,
 };
 
+// ---------- спецслужбы ----------
+export const INTEL_COST = [0, 0.01, 0.025, 0.05]; // контрразведка — доля налогов
+
+// ---------- госдолг ----------
+export const IMF_RATE = 0.015; // кредит МВФ, годовых
+
+// ---------- тайная ложа ----------
+export const LODGE_DUES = 0.01; // взносы члена ложи — доля налогов
+export const LODGE_TITHE = 0.5; // какая часть взносов братьев идёт Великому мастеру
+/** Стабильность, если правитель открыто признал себя масоном: верующие этого не прощают. */
+export const LODGE_OPEN_STAB: Record<ReligionPolicy, number> = { secular: 0, freedom: -2, state: -5, theocracy: -9 };
+
 export const START_YEAR = 2026;
 export const WAR_GRACE_DAYS = 365;
 export const BATTLE_DAYS = 20;

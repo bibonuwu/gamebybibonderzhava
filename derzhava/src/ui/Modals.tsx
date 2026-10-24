@@ -29,6 +29,9 @@ export function Modals({ map }: { map: MapView }) {
         <div class={`modal ${ev.kind ?? ''}`}>
           {ev.kind === 'demand' && <div class="demand-tag">📢 Голос народа</div>}
           {ev.kind === 'un' && <div class="demand-tag un">🌐 Совет Безопасности ООН</div>}
+          {ev.kind === 'lodge' && <div class="demand-tag lodge">👁️ Тайная ложа</div>}
+          {ev.kind === 'election' && <div class="demand-tag election">🗳️ Выборы</div>}
+          {ev.kind === 'debt' && <div class="demand-tag debt">🏦 Финансы</div>}
           <div class="m-ic">{ev.icon}</div>
           <h2>{ev.title}</h2>
           <p>{ev.text}</p>
@@ -48,7 +51,7 @@ export function Modals({ map }: { map: MapView }) {
   if (m.kind === 'mail') return <MailModal id={m.id} />;
   const close = () => setUI({ modal: null });
   let body: ComponentChildren = null;
-  if (m.kind === 'country') body = <CountryDialog id={m.id} map={map} />;
+  if (m.kind === 'country') body = <CountryDialog id={m.id} />;
   else if (m.kind === 'attack') body = <AttackDialog rid={m.rid} />;
   else if (m.kind === 'details') body = <Details res={m.res} />;
   else if (m.kind === 'menu') body = <Menu map={map} />;
@@ -167,20 +170,7 @@ function Menu({ map }: { map: MapView }) {
       </div>
       <div class="card"><AudioSettings /></div>
       <InstallApp />
-      <div class="card hotkeys">
-        <h3>⌨️ Клавиши</h3>
-        <div class="kv small">
-          <span><kbd>Пробел</kbd></span><span>пауза</span>
-          <span><kbd>+</kbd> <kbd>−</kbd></span><span>скорость</span>
-          <span><kbd>1</kbd>…<kbd>6</kbd></span><span>вкладки</span>
-          <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / стрелки</span><span>двигать карту</span>
-          <span><kbd>Q</kbd> <kbd>E</kbd> / колёсико</span><span>отдалить / приблизить</span>
-          <span><kbd>H</kbd></span><span>к столице</span>
-          <span><kbd>J</kbd> · <kbd>N</kbd> · <kbd>M</kbd></span><span>задания · новости · почта</span>
-          <span><kbd>Esc</kbd></span><span>закрыть</span>
-        </div>
-        <div class="small muted" style={{ marginTop: '6px' }}>На телефоне: двойной тап — приблизить, щипок — масштаб.</div>
-      </div>
+      <div class="small muted" style={{ marginTop: '10px', textAlign: 'center', opacity: 0.7 }}>Иконки: game-icons.net (Lorc, Delapouite и др.), CC BY 3.0</div>
     </>
   );
 }

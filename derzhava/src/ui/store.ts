@@ -5,7 +5,7 @@ import { tick } from '../game/sim';
 import { emit, getGame, sfx, subscribe, toast } from '../game/state';
 
 export type Tab = 'map' | 'policy' | 'build' | 'army' | 'market' | 'stats';
-export type ArmyTab = 'army' | 'diplo';
+export type ArmyTab = 'army' | 'diplo' | 'lodge' | 'spy';
 export type MarketTab = 'food' | 'arms' | 'sci' | 'corp';
 export type PolicyTab = 'econ' | 'society' | 'people' | 'power' | 'science';
 export type Modal =
@@ -25,7 +25,8 @@ export const ui = {
   modal: null as Modal | null,
   frac: 0,
   marketTab: 'food' as MarketTab,
-  armyTab: 'army' as ArmyTab, // «Армия» и «Дипломатия» — одна вкладка
+  armyTab: 'army' as ArmyTab, // «Армия», «Дипломатия», «Ложа» и «Разведка» — одна вкладка
+  spyTarget: -1, // страна, выбранная во вкладке «Разведка»
   policyTab: 'econ' as PolicyTab, // какую подвкладку «Политики» открыть
 };
 

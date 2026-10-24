@@ -1,6 +1,7 @@
 // Картинки для писем: маленькие живые сцены на SVG (анимации — в style.css, классы .a-*).
 // Каждая сцена 320×150; id градиентов с префиксом сцены, чтобы не путались между собой.
 import type { ComponentChildren } from 'preact';
+import { Icon } from './icons';
 
 const d = (s: number) => ({ animationDelay: `${s}s` });
 
@@ -617,7 +618,7 @@ const SCENES: Record<string, (hint?: string) => ComponentChildren> = {
         </g>
       ))}
       <ellipse cx="160" cy="128" rx="40" ry="6" fill="#2b8a3e" opacity="0.3" />
-      <g class="a-hop slow"><text x="160" y="124" text-anchor="middle" font-size="64">{hint}</text></g>
+      <g class="a-hop slow"><Icon e={hint} x={160} y={98} size={58} /></g>
       {[[110, 70], [210, 60], [130, 46]].map(([x, y], i) => <path key={i} class="a-heart" style={d(i * 0.9)} d={`M${x} ${y} c-4 -5 -10 0 0 7 c10 -7 4 -12 0 -7 Z`} fill="#ff8787" />)}
     </>
   ) : (
@@ -691,6 +692,54 @@ const SCENES: Record<string, (hint?: string) => ComponentChildren> = {
           <circle cx={x + (i < 2 ? 4 : -4)} cy="106" r="4" fill={i % 2 ? '#e03131' : '#f03e3e'} />
         </g>
       ))}
+    </>
+  ),
+  // тайная ложа: зал с шахматным полом, колонны, алтарь со свечами и всевидящее око
+  lodge: () => (
+    <>
+      <Sky id="lo" top="#07060c" bottom="#21190d" />
+      <Stars n={14} h={56} seed={13} />
+      <defs>
+        <pattern id="lo-check" width="16" height="16" patternUnits="userSpaceOnUse">
+          <rect width="16" height="16" fill="#e9dfc8" />
+          <rect width="8" height="8" fill="#15120c" />
+          <rect x="8" y="8" width="8" height="8" fill="#15120c" />
+        </pattern>
+        <radialGradient id="lo-glow" cx="0.5" cy="0.5" r="0.5">
+          <stop offset="0" stop-color="#f2d78b" stop-opacity="0.55" />
+          <stop offset="1" stop-color="#f2d78b" stop-opacity="0" />
+        </radialGradient>
+      </defs>
+      <circle cx="160" cy="50" r="62" fill="url(#lo-glow)" class="a-blink soft" />
+      <g class="a-spin slow">
+        {Array.from({ length: 18 }, (_, i) => {
+          const a = (i * Math.PI) / 9;
+          return <line key={i} x1={160 + Math.cos(a) * 26} y1={50 + Math.sin(a) * 26} x2={160 + Math.cos(a) * 72} y2={50 + Math.sin(a) * 72} stroke="#f2d78b" stroke-width="2" opacity="0.2" />;
+        })}
+      </g>
+      <path d="M20 150 L84 110 L236 110 L300 150 Z" fill="url(#lo-check)" />
+      <path d="M84 110 L236 110" stroke="#c99a3d" stroke-width="2" />
+      {[64, 256].map((x, i) => (
+        <g key={x}>
+          <rect x={x - 9} y="44" width="18" height="76" fill="#d9c9a3" />
+          <rect x={x - 13} y="38" width="26" height="8" rx="2" fill="#c99a3d" />
+          <rect x={x - 13} y="118" width="26" height="8" rx="2" fill="#c99a3d" />
+          <circle cx={x} cy="30" r="9" fill="#c99a3d" />
+          <text x={x} y="88" text-anchor="middle" font-size="13" font-weight="700" fill="#7a5418" font-family="Georgia, serif">{i ? 'J' : 'B'}</text>
+        </g>
+      ))}
+      <rect x="134" y="104" width="52" height="16" rx="2" fill="#3b2a12" stroke="#c99a3d" />
+      <path d="M146 104 l14 -6 l14 6 Z" fill="#f3e2b8" />
+      {[140, 160, 180].map((x, i) => (
+        <g key={x}>
+          <rect x={x - 2.5} y={86 - (i === 1 ? 6 : 0)} width="5" height={18 + (i === 1 ? 6 : 0)} fill="#f8f0e3" />
+          <path class="a-flame" style={d(i * 0.13)} d={`M${x} ${78 - (i === 1 ? 6 : 0)} q4 5 0 9 q-4 -4 0 -9 Z`} fill="#ffc94d" />
+        </g>
+      ))}
+      <path d="M160 18 L188 66 L132 66 Z" fill="#14100a" stroke="#f2d78b" stroke-width="2.5" stroke-linejoin="round" />
+      <path d="M146 52 Q160 38 174 52 Q160 64 146 52 Z" fill="#fff6dc" />
+      <circle cx="160" cy="52" r="5.5" fill="#5b3d12" />
+      <circle cx="160" cy="52" r="2.4" fill="#0b0805" />
     </>
   ),
   cat: () => (

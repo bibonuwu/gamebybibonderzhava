@@ -11,12 +11,14 @@ import { MapView } from './map/MapView';
 import { initPwa } from './pwa';
 import { App } from './ui/App';
 import { initFx } from './ui/fx';
+import { initIcons } from './ui/icons';
 import { startLoop } from './ui/store';
 
 async function boot() {
   initPwa();
   initAudio();
   initFx();
+  initIcons();
   // шрифты нужны до создания подписей на карте
   await Promise.race([
     Promise.all([document.fonts.load('700 20px "Cormorant SC"'), document.fonts.load('700 20px "PT Sans"')]),

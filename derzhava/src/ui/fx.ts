@@ -4,6 +4,7 @@ import { STATS } from '../game/economy';
 import { fmt } from '../game/format';
 import { getGame, subscribe } from '../game/state';
 import type { GameState } from '../game/types';
+import { iconHTML } from './icons';
 import { prefs } from './store';
 
 let layer: HTMLDivElement | null = null;
@@ -27,7 +28,7 @@ function spawn(cls: string, text: string, x: number, y: number) {
   return el;
 }
 
-const RIPPLE = '.btn, .nav button, .tabs button, .seg button, .country-btn, .option-card, .res, .toggle, .map-ctl button, .st-chip, .time-ctl button';
+const RIPPLE = '.btn, .nav button, .tabs button, .seg button, .country-btn, .option-card, .res, .toggle, .st-chip, .time-ctl button';
 // без поддержки анимации псевдоэлементов волна анимировала бы саму кнопку — тогда обходимся без неё
 const PSEUDO_ANIM = typeof KeyframeEffect !== 'undefined' && 'pseudoElement' in KeyframeEffect.prototype;
 
@@ -58,6 +59,10 @@ function chip(target: Element, text: string, good: boolean) {
 function bump(target: Element, good: boolean) {
   const val = target.querySelector('.val');
   val?.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.16)' }, { transform: 'scale(1)' }], { duration: 420, easing: 'ease-out' });
+  target.querySelector('.lbl .gi')?.animate(
+    [{ transform: 'none' }, { transform: `translateY(-4px) scale(1.35) rotate(${good ? -14 : 14}deg)` }, { transform: 'none' }],
+    { duration: 560, easing: 'cubic-bezier(.2,1.4,.4,1)' },
+  );
   const glow = good ? 'rgba(95, 211, 138, 0.6)' : 'rgba(255, 122, 122, 0.55)';
   target.animate(
     [{ boxShadow: `0 0 0 0 ${glow}` }, { boxShadow: `0 0 0 3px ${glow}` }, { boxShadow: '0 0 0 0 rgba(0,0,0,0)' }],
@@ -70,8 +75,10 @@ export function flyTo(x: number, y: number, target: Element, icon: string, count
   if (!prefs.fx) return;
   const r = target.getBoundingClientRect();
   const tx = r.left + r.width / 2 - x, ty = r.top + r.height / 2 - y;
+  const html = iconHTML(icon);
   for (let i = 0; i < count; i++) {
-    const el = spawn('fx-coin', icon, x, y);
+    const el = spawn('fx-coin', '', x, y);
+    el.innerHTML = html;
     const a = Math.random() * Math.PI * 2;
     const spread = 30 + Math.random() * 50;
     const mx = Math.cos(a) * spread, my = Math.sin(a) * spread - 40;

@@ -1,22 +1,8 @@
-// Управление картой кнопками и клавиатурой (ПК).
+// Управление картой с клавиатуры (ПК).
 import { useEffect } from 'preact/hooks';
 import { emit, getGame } from '../game/state';
 import type { MapView } from '../map/MapView';
-import { prefs, setPrefs, setUI, ui, useStore, type Speed, type Tab } from './store';
-
-/** ＋ / − / к столице — справа на карте. */
-export function MapControls({ map }: { map: MapView }) {
-  useStore();
-  const g = getGame();
-  if (!g || ui.tab !== 'map' || g.gameOver) return null;
-  return (
-    <div class="map-ctl">
-      <button onClick={() => map.zoomBy(1.6)} aria-label="Приблизить" title="Приблизить (E)">＋</button>
-      <button onClick={() => map.zoomBy(1 / 1.6)} aria-label="Отдалить" title="Отдалить (Q)">−</button>
-      <button onClick={() => map.home()} aria-label="К столице" title="К столице (H)">🏛️</button>
-    </div>
-  );
-}
+import { prefs, setPrefs, setUI, ui, type Speed, type Tab } from './store';
 
 const TAB_KEYS: Tab[] = ['map', 'policy', 'build', 'army', 'market', 'stats'];
 const PAN: Record<string, string> = {

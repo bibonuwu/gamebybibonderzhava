@@ -13,6 +13,8 @@ import {
 import { difficultyMult, PORT_TILES, regionWeight, STATS } from './economy';
 import { fmt } from './format';
 import { buyArms, buyQuote, maxBuy, sellArms } from './market';
+import { botDebt } from './debt';
+import { brothers } from './lodge';
 import { aiNuclear, BOMB_TECH, isNuclear } from './nuclear';
 import { botPeople } from './people';
 import {
@@ -21,6 +23,7 @@ import {
 } from './society';
 import { log, news, pick, rand, sfx } from './state';
 import type { BudgetKey, BuildingType, Company, GameState, Genius, GovType, Proposal, ReligionPolicy, Sector } from './types';
+import { botSpy } from './spy';
 import { fearsUN, sanctions, victimsOf } from './un';
 import { rivals, startWonder, WONDERS, wonderCost, wonderError, wonderInRegion } from './wonders';
 import { REGIONS, REGION_OF } from './world';
@@ -70,6 +73,8 @@ export function aiTurn(g: GameState, i: number) {
   considerWar(g, i, th);
   if ((Math.floor(g.day / 4) + i) % 5 === 0) aiDiplomacy(g, i, th);
   botPeople(g, i, smart(g));
+  botDebt(g, i);
+  botSpy(g, i);
 }
 
 // ---------- оценка обстановки ----------
@@ -439,6 +444,7 @@ function warScore(g: GameState, i: number, j: number, leader: number, breakPact:
   // ядерное сдерживание: на ядерную державу нападают неохотно
   if (isNuclear(g, j)) ratio /= isNuclear(g, i) ? 1.4 : 2.5;
   const rel = g.rel[i][j];
+  if (brothers(g, i, j) && rel > -60) return 0; // брат на брата не идёт
   let [need, relMax] = WAR_NEED[c.personality] ?? [2, -50];
   if (c.personality === 'fanatic' && g.countries[j].religion === c.religion) relMax = -40;
   if (j === leader && busy > 0) {
@@ -748,6 +754,8 @@ export function driftRelations(g: GameState) {
   const threat = g.countries.map((c, i) => c.alive && (STATS[i].power > median * 4 || STATS[i].regions.length > startRegions[i] * 1.6 + 2));
   const borders = g.countries.map((c, i) => (c.alive ? neighborCountries(g, i) : new Set<number>()));
   const enemies = g.countries.map((c, i) => (c.alive ? enemiesOf(g, i) : []));
+  const lodge = new Set(g.lodge.members);
+  const banned = g.lodge.status === 'banned';
   for (let a = 0; a < n; a++) {
     const ca = g.countries[a];
     if (!ca.alive) continue;
@@ -771,6 +779,9 @@ export function driftRelations(g: GameState) {
       // враг моего врага — мой друг
       if (enemies[a].some((k) => enemies[b].includes(k))) base += 12;
       if (borders[a].has(b)) base -= 6;
+      // братья по ложе дружат, а запретившего ложу братья недолюбливают
+      if (lodge.has(a) && lodge.has(b)) base += 12;
+      else if (banned && ((a === g.player && lodge.has(b)) || (b === g.player && lodge.has(a)))) base -= 10;
       for (const x of [ca, cb]) {
         if (x.personality === 'trader') base += 8;
         if (x.personality === 'aggressor') base -= 10;

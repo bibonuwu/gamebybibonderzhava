@@ -1,3 +1,4 @@
+import { rating } from './debt';
 import { TECHS } from './defs';
 import { STATS } from './economy';
 import { banner, log, sfx } from './state';
@@ -56,6 +57,16 @@ export const ACHIEVEMENTS: AchievementDef[] = [
   { id: 'atom1', icon: '☢️', name: 'Ядерная держава', desc: 'Проведите ядерное испытание', check: (g) => (g.counters.nukeTests ?? 0) >= 1 },
   { id: 'peaceatom', icon: '🕊️', name: 'Мирный атом', desc: 'Держите 5 боеголовок и ни разу не нажмите кнопку', check: (g) =>
     (me(g).nukes ?? 0) >= 5 && !g.counters.nukesLaunched },
+  { id: 'lodge1', icon: '🕯️', name: 'Посвящённый', desc: 'Вступите в тайную ложу', check: (g) => g.lodge.status === 'member' },
+  { id: 'lodgegm', icon: '👁️', name: 'Великий мастер', desc: 'Возглавьте тайную ложу', check: (g) => g.lodge.status === 'member' && g.lodge.master === g.player },
+  { id: 'coup', icon: '🔥', name: 'Серый кардинал', desc: 'Устройте успешный переворот в чужой стране', check: (g) => (g.counters.coups ?? 0) >= 1 },
+  { id: 'lodgeban', icon: '🚫', name: 'Охотник на масонов', desc: 'Запретите тайную ложу в своей стране', check: (g) => (g.counters.lodgeBanned ?? 0) >= 1 },
+  { id: 'elect1', icon: '🗳️', name: 'Народный избранник', desc: 'Победите на выборах', check: (g) => (g.counters.electionsWon ?? 0) >= 1 },
+  { id: 'elect3', icon: '🏛️', name: 'Трижды избранный', desc: 'Победите на трёх выборах', check: (g) => (g.counters.electionsWon ?? 0) >= 3 },
+  { id: 'promise3', icon: '🤞', name: 'Слово чести', desc: 'Выполните три предвыборных обещания', check: (g) => (g.counters.promisesKept ?? 0) >= 3 },
+  { id: 'spy7', icon: '🕵️', name: 'Агент 007', desc: 'Проведите 7 успешных операций разведки', check: (g) => (g.counters.spyWins ?? 0) >= 7 },
+  { id: 'catch5', icon: '🧤', name: 'Контрразведка не дремлет', desc: 'Поймайте 5 групп чужих агентов', check: (g) => (g.counters.spiesCaught ?? 0) >= 5 },
+  { id: 'aaa', icon: '🏦', name: 'Рейтинг AAA', desc: 'Добейтесь высшего кредитного рейтинга', check: (g) => rating(g, g.player) === 0 },
   { id: 'top1', icon: '🥇', name: 'Мировой лидер', desc: 'Станьте №1 по военной мощи или экономике', check: (g) =>
     rankOf(g, (i) => STATS[i].power) === 1 || rankOf(g, (i) => STATS[i].moneyRate) === 1 },
 ];

@@ -135,13 +135,19 @@ const SHOCKS: { good: 'food' | 'arms'; v: number; text: string; kind: 'good' | '
   { good: 'arms', v: -0.3, text: '🕊️ Договор о разоружении: оружие дешевеет', kind: 'good' },
 ];
 
+/** Резкий скачок цены: мировое потрясение или биржевой сговор тайной ложи. */
+export function shockMarket(g: GameState, good: 'food' | 'arms', v: number) {
+  const m = g.market[good];
+  m.shock = Math.max(-0.5, Math.min(1.5, m.shock + v));
+  refresh(g);
+}
+
 function worldShock(g: GameState) {
   const mk = g.market;
   mk.nextShock = g.day + 350 + Math.floor(rand(g) * 300);
   const sh = pick(g, SHOCKS);
   const m = mk[sh.good];
-  m.shock = Math.max(-0.5, Math.min(1.5, m.shock + sh.v));
-  refresh(g);
+  shockMarket(g, sh.good, sh.v);
   news(g, `${sh.text} (${fmt(m.price * (sh.good === 'food' ? 1e6 : 1e3))} 💰 за ${sh.good === 'food' ? '1M т' : '1K комплектов'})`, sh.kind);
 }
 

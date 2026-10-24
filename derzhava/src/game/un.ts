@@ -4,6 +4,7 @@ import {
   addRel, alliesOf, atWar, cname, enemiesOf, hasPort, makePeace, neighborCountries, pair, peekPair, seaReach,
 } from './actions';
 import { computeAll, SANCTION_MAX, sanctionLoss, STATS } from './economy';
+import { lodgeShield } from './lodge';
 import { fmt } from './format';
 import { banner, log, news, rand, sfx } from './state';
 import type { GameState, Personality, UNCase, UNVote } from './types';
@@ -59,6 +60,7 @@ const VOTE_NAME: Record<UNVote, string> = { yes: 'за', veto: 'вето', absta
 function p5Vote(g: GameState, m: number, a: number, b: number): UNVote {
   if (m === a || peekPair(g, m, a).alliance || atWar(g, m, b)) return 'veto';
   if (m === b || peekPair(g, m, b).alliance) return 'yes';
+  if (a === g.player && lodgeShield(g, m)) return 'veto'; // брат по ложе прикрывает (услуга «Кулуары ООН»)
   const ra = g.rel[m][a], rb = g.rel[m][b];
   if (ra >= 40 && ra > rb + 25) return 'veto'; // покрывает друга
   if (ra > rb + 10) return 'abstain';
@@ -82,6 +84,7 @@ function respond(g: GameState, a: number, b: number, mandate: boolean): Response
   g.countries.forEach((c, k) => {
     if (!c.alive || k === a || k === b || k === g.player) return;
     if (peekPair(g, k, a).alliance || atWar(g, k, b)) return;
+    if (a === g.player && lodgeShield(g, k)) return;
     const ra = g.rel[k][a], rb = g.rel[k][b];
     if (mandate ? ra >= 50 : ra >= 15 || ra > rb) return;
     out.sanctions.push(k);

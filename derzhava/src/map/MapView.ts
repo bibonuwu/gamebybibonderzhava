@@ -1,11 +1,14 @@
 // Отрисовка гекс-карты (PixiJS): рельеф, границы, города, здания, бои, управление пальцами.
-import { Application, BlurFilter, Container, Graphics, Rectangle, Sprite, Text, type Texture } from 'pixi.js';
+import { Application, BlurFilter, Container, Graphics, Rectangle, Sprite, Text, Texture } from 'pixi.js';
 import { BUILDINGS } from '../game/defs';
 import { mapDirty, mapFx } from '../game/state';
+import { iconCanvas } from '../ui/icons';
 import { WONDER_BY_ID } from '../game/wonders';
 import type { BuildingType, GameState } from '../game/types';
 import { COLS, COUNTRY_DEFS, N, NEIGH, REGIONS, REGION_OF, ROWS, TERRAIN, isWater } from '../game/world';
 import { SeaLife } from './SeaLife';
+import { Decor } from './Decor';
+import { Surface } from './Surface';
 
 const S = 12; // радиус гекса
 const HW = Math.sqrt(3) * S; // ширина гекса
@@ -73,6 +76,8 @@ export class MapView {
   private seaUnder = new Container();
   private seaOver = new Container();
   private sea: SeaLife | null = null;
+  /** Вода и суша на шейдере (WebGL 2); без него — плоские гексы. */
+  private surface: Surface | null = null;
   private depth = new Int16Array(N);
   private clouds: { sp: Sprite; shadow: Sprite; v: number }[] = [];
   private hoverTile = -1;
@@ -134,15 +139,23 @@ export class MapView {
     this.app.canvas.style.cursor = 'grab';
     this.app.stage.addChild(this.world);
     const ocean = new Graphics().rect(-WORLD_W, -200, WORLD_W * 3, WORLD_H + 400).fill(DEEP_SEA);
+    this.measureDepth();
+    if (Surface.supported(this.app.renderer)) {
+      this.surface = new Surface({ s: S, width: WORLD_W, height: WORLD_H, tileAt: (x, y) => this.tileAtWorld(x, y) });
+    }
+    const sf = this.surface;
+    // горы, леса и домики городов — объёмными картинками поверх шейдерной земли
+    const decor = sf ? [new Decor({ renderer: this.app.renderer, center: tileCenter }).layer] : [];
     this.world.addChild(
-      ocean, this.waterG, this.seaUnder, this.waveA, this.waveB, this.coastG, this.terrainG, this.ownerG, this.previewG, this.falloutG,
+      ocean, ...(sf ? [sf.water, this.seaUnder, sf.land] : [this.waterG, this.seaUnder, this.waveA, this.waveB, this.coastG]),
+      this.terrainG, this.ownerG, this.previewG, this.falloutG, ...decor,
       this.fxLayer, this.glowG, this.borderG, this.selG, this.hoverG, this.selRing, this.pingG, this.cityG, this.buildLayer, this.progressG,
       this.wonderLayer, this.battleLayer, this.seaOver, this.cloudLayer, this.cityLabels, this.foreignLabels, this.countryLabels,
     );
     this.screenFlash.alpha = 0;
     this.app.stage.addChild(this.screenFlash);
-    this.drawWater();
-    this.drawTerrain();
+    if (!sf) this.drawWater();
+    this.drawTerrain(!sf);
     this.makeClouds();
     this.sea = new SeaLife({
       renderer: this.app.renderer, depth: this.depth, tileAt: (x, y) => this.tileAtWorld(x, y), center: tileCenter,
@@ -157,8 +170,8 @@ export class MapView {
   }
 
   // ---------- вода: глубина, пена у берегов, волны ----------
-  private drawWater() {
-    // расстояние до суши (в клетках) — чем дальше от берега, тем темнее море
+  /** Расстояние до суши (в клетках) — по нему темнеет море и плавают рыбы и киты. */
+  private measureDepth() {
     const depth = this.depth.fill(99);
     const queue: number[] = [];
     for (let t = 0; t < N; t++) {
@@ -177,6 +190,11 @@ export class MapView {
         }
       }
     }
+  }
+
+  /** Запасная вода без шейдера: плоские гексы, пена и мерцающие барашки. */
+  private drawWater() {
+    const depth = this.depth;
     const w = this.waterG;
     for (let t = 0; t < N; t++) {
       if (TERRAIN[t] !== 'o') continue;
@@ -243,9 +261,10 @@ export class MapView {
   }
 
   // ---------- рельеф ----------
-  private drawTerrain() {
+  /** fills = false — землю рисует шейдер, остаётся только сетка клеток. */
+  private drawTerrain(fills: boolean) {
     const g = this.terrainG;
-    for (let t = 0; t < N; t++) {
+    for (let t = 0; t < N && fills; t++) {
       const ter = TERRAIN[t];
       if (ter === 'o') continue;
       const [cx, cy] = tileCenter(t);
@@ -253,7 +272,7 @@ export class MapView {
       g.poly(CORNERS.flatMap(([x, y]) => [cx + x * 1.01, cy + y * 1.01])).fill(color);
     }
     // декор местности
-    for (let t = 0; t < N; t++) {
+    for (let t = 0; t < N && fills; t++) {
       const ter = TERRAIN[t];
       const [cx, cy] = tileCenter(t);
       const h = hash(t + 7);
@@ -285,7 +304,7 @@ export class MapView {
         g.moveTo(cx + CORNERS[a][0], cy + CORNERS[a][1]).lineTo(cx + CORNERS[b][0], cy + CORNERS[b][1]);
       }
     }
-    g.stroke({ width: 0.5, color: 0x000000, alpha: 0.13 });
+    g.stroke({ width: 0.5, color: 0x000000, alpha: fills ? 0.13 : 0.1 });
   }
 
   // ---------- границы и города ----------
@@ -300,11 +319,14 @@ export class MapView {
     fill.clear();
     border.clear();
     const segs = new Map<number, number[]>();
+    // с объёмной землёй — как в «Цивилизации»: лёгкая заливка и цветная полоса вдоль границы изнутри
+    const civ = !!this.surface;
+    const bands = new Map<number, number[]>();
     for (let t = 0; t < N; t++) {
       if (isWater(t)) continue;
       const owner = this.ownerOf(t);
       const [cx, cy] = tileCenter(t);
-      if (owner >= 0) fill.poly(CORNERS.flatMap(([x, y]) => [cx + x, cy + y])).fill({ color: COUNTRY_COLORS[owner], alpha: 0.3 });
+      if (owner >= 0) fill.poly(CORNERS.flatMap(([x, y]) => [cx + x, cy + y])).fill({ color: COUNTRY_COLORS[owner], alpha: civ ? 0.14 : 0.3 });
       for (let d = 0; d < 6; d++) {
         const n = NEIGH[t * 6 + d];
         const on = this.ownerOf(n);
@@ -314,12 +336,21 @@ export class MapView {
           if (!arr) segs.set(owner, (arr = []));
           const k = 0.86;
           arr.push(cx + CORNERS[a][0] * k, cy + CORNERS[a][1] * k, cx + CORNERS[b][0] * k, cy + CORNERS[b][1] * k);
+          let band = bands.get(owner);
+          if (!band) bands.set(owner, (band = []));
+          band.push(cx + CORNERS[a][0] * 0.68, cy + CORNERS[a][1] * 0.68, cx + CORNERS[b][0] * 0.68, cy + CORNERS[b][1] * 0.68);
         } else if (on === owner && n >= 0 && REGION_OF[n] !== REGION_OF[t] && d < 3) {
           border.moveTo(cx + CORNERS[a][0], cy + CORNERS[a][1]).lineTo(cx + CORNERS[b][0], cy + CORNERS[b][1]);
         }
       }
     }
     border.stroke({ width: 0.8, color: 0xffffff, alpha: 0.3 });
+    if (civ) {
+      for (const [owner, arr] of bands) {
+        for (let i = 0; i < arr.length; i += 4) fill.moveTo(arr[i], arr[i + 1]).lineTo(arr[i + 2], arr[i + 3]);
+        fill.stroke({ width: 5, color: COUNTRY_COLORS[owner], alpha: 0.32, cap: 'round' });
+      }
+    }
     for (const arr of segs.values()) {
       for (let i = 0; i < arr.length; i += 4) border.moveTo(arr[i], arr[i + 1]).lineTo(arr[i + 2], arr[i + 3]);
     }
@@ -524,6 +555,25 @@ export class MapView {
     return tex;
   }
 
+  /** Значок-картинка size×size с центром в (x, y); если картинки нет — эмодзи шрифтом. */
+  private glyph(emoji: string, size: number, x: number, y: number): Sprite | Text {
+    const cv = iconCanvas(emoji, size * 2);
+    const g = cv ? new Sprite(Texture.from(cv, true)) : new Text({ text: emoji, style: { fontFamily: EMOJI_FONT, fontSize: size * 0.9 }, resolution: 2 });
+    if (cv) g.width = g.height = size;
+    g.anchor.set(0.5);
+    g.position.set(x, y);
+    return g;
+  }
+
+  /** Снимок контейнера в текстуру; сам контейнер и картинки значков больше не нужны. */
+  private bake(key: string, c: Container): Texture {
+    const tex = this.app.renderer.generateTexture({ target: c, resolution: 2 });
+    this.textures.set(key, tex);
+    for (const ch of c.children) if (ch instanceof Sprite) ch.texture.destroy(true);
+    c.destroy({ children: true });
+    return tex;
+  }
+
   // ---------- здания ----------
   private texture(key: string, emoji: string, level: number, building: boolean): Texture {
     let tex = this.textures.get(key);
@@ -533,24 +583,16 @@ export class MapView {
       .circle(32, 32, 28)
       .fill({ color: 0x0e1c30, alpha: 0.88 })
       .stroke({ width: 4, color: level >= 3 ? 0xf2cf6b : level === 2 ? 0xd9dee8 : 0xb07a43, alpha: building ? 0.5 : 1 });
-    const txt = new Text({ text: emoji, style: { fontFamily: EMOJI_FONT, fontSize: 32 }, resolution: 2 });
-    txt.anchor.set(0.5);
-    txt.position.set(32, 33);
-    txt.alpha = building ? 0.45 : 1;
-    c.addChild(bg, txt);
+    const ic = this.glyph(emoji, 38, 32, 32);
+    ic.alpha = building ? 0.45 : 1;
+    c.addChild(bg, ic);
     for (let i = 0; i < level; i++) {
       c.addChild(new Graphics().circle(32 + (i - (level - 1) / 2) * 11, 62, 4.5).fill(0xf2cf6b).stroke({ width: 1.5, color: 0x0e1c30 }));
     }
     if (building) {
-      const h = new Text({ text: '🔨', style: { fontFamily: EMOJI_FONT, fontSize: 22 }, resolution: 2 });
-      h.anchor.set(0.5);
-      h.position.set(48, 16);
-      c.addChild(h);
+      c.addChild(this.glyph('🔨', 26, 48, 16));
     }
-    tex = this.app.renderer.generateTexture({ target: c, resolution: 2 });
-    this.textures.set(key, tex);
-    c.destroy({ children: true });
-    return tex;
+    return this.bake(key, c);
   }
 
   private syncBuildings() {
@@ -651,15 +693,13 @@ export class MapView {
     });
   }
 
-  /** Эмодзи без подложки (для эффектов). */
+  /** Значок без подложки (для эффектов). */
   private plainTexture(key: string, emoji: string): Texture {
     let tex = this.textures.get(key);
     if (tex) return tex;
-    const txt = new Text({ text: emoji, style: { fontFamily: EMOJI_FONT, fontSize: 48 }, resolution: 2 });
-    tex = this.app.renderer.generateTexture({ target: txt, resolution: 2 });
-    this.textures.set(key, tex);
-    txt.destroy();
-    return tex;
+    const c = new Container();
+    c.addChild(this.glyph(emoji, 54, 30, 30));
+    return this.bake(key, c);
   }
 
   /** Значок чуда света: золотое двойное кольцо. */
@@ -670,14 +710,8 @@ export class MapView {
     const c = new Container();
     c.addChild(new Graphics().circle(34, 34, 31).fill({ color: 0x1a1408, alpha: 0.92 }).stroke({ width: 5, color: 0xf2cf6b }));
     c.addChild(new Graphics().circle(34, 34, 24).stroke({ width: 1.5, color: 0xf2cf6b, alpha: 0.6 }));
-    const txt = new Text({ text: emoji, style: { fontFamily: EMOJI_FONT, fontSize: 32 }, resolution: 2 });
-    txt.anchor.set(0.5);
-    txt.position.set(34, 35);
-    c.addChild(txt);
-    tex = this.app.renderer.generateTexture({ target: c, resolution: 2 });
-    this.textures.set(key, tex);
-    c.destroy({ children: true });
-    return tex;
+    c.addChild(this.glyph(emoji, 38, 34, 34));
+    return this.bake(key, c);
   }
 
   private syncWonders() {
@@ -1124,6 +1158,7 @@ export class MapView {
   /** Живая карта: море, облака, ореол своей страны, пульс выделения, «радар» над столицей. */
   private animateWorld(now: number, dt: number, z: number) {
     const fancy = this.fancy;
+    this.surface?.update(now, z, this.app.renderer.resolution, fancy);
     const s = Math.sin(now / 1500);
     this.waveA.visible = this.waveB.visible = z >= 0.45;
     this.waveA.alpha = fancy ? 0.2 + 0.4 * (0.5 + 0.5 * s) : 0.4;
