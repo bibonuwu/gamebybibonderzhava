@@ -1,6 +1,6 @@
 import type { ComponentChildren } from 'preact';
 import {
-  annex, annexCost, annexError, cancelTreaty, declareWar, demandTribute, DIPLO_NAME, diploError, gift, giftCost, maxTrade,
+  annex, annexCost, annexError, atWar, cancelTreaty, declareWar, demandTribute, DIPLO_NAME, diploError, gift, giftCost, maxTrade,
   peekPair, propose, reachableTargets, warError, type DiploKind,
 } from '../../game/actions';
 import { answerProposal, PROPOSAL_TEXT } from '../../game/ai';
@@ -8,6 +8,10 @@ import { GOVS, PERSONALITIES, RELIGIONS } from '../../game/defs';
 import { STATS, tradeWith } from '../../game/economy';
 import { fmt, fmtDays } from '../../game/format';
 import { emit, getGame, toast } from '../../game/state';
+import type { GameState, UNCase } from '../../game/types';
+import {
+  aidCost, countriesN, embargoed, forecast, isAggressor, P5, playerAid, playerSanctions, sanctions, victimsOf, warJustice,
+} from '../../game/un';
 import { WONDER_BY_ID, wondersOf } from '../../game/wonders';
 import { COUNTRY_DEFS, REGIONS } from '../../game/world';
 import { Bar, Card, Flag, KV, LiveNum, More, Rate, RelBar, relText } from '../common';
@@ -25,12 +29,12 @@ export function DiploPanel({ map }: { map: MapView }) {
     .sort((a, b) => a.cost - b.cost);
   return (
     <>
-      <h2 class="ptitle">Дипломатия</h2>
       {g.proposals.length > 0 && (
         <Card title="📨 Предложения">
           {g.proposals.map((p) => <ProposalRow key={p.id} id={p.id} />)}
         </Card>
       )}
+      <UNCard />
       <Treaties />
       <Card title="🌍 Страны мира" hint="Нажмите на страну, чтобы предложить договор, сделать подарок или объявить войну. Полоска справа — отношения с вами.">
         {others.map((c) => {
@@ -50,6 +54,8 @@ export function DiploPanel({ map }: { map: MapView }) {
                   {p.pact && !p.alliance && <span class="chip">📜 пакт</span>}
                   {p.trade && <span class="chip">🤝 торговля</span>}
                   {c.aiFlags.prepTarget === me && <span class="chip war">🪖 готовит нападение!</span>}
+                  {isAggressor(g, c.idx) && <span class="chip war" title="Напала на другую страну без причины — ООН её осудила">🌐 агрессор</span>}
+                  {sanctions(g, me, c.idx) && <span class="chip">🚫 наши санкции</span>}
                 </div>
               </div>
               <div style={{ textAlign: 'right' }}>
@@ -122,6 +128,11 @@ export function CountryDialog({ id, map }: { id: number; map: MapView }) {
           🕵️ Разведка: {c.aiFlags.prepTarget === me ? 'скупает оружие и готовит нападение на нас!' : `мобилизуется против страны ${COUNTRY_DEFS[c.aiFlags.prepTarget].name}`}
         </p>
       )}
+      {isAggressor(g, id) && (
+        <p class="small down" style={{ marginTop: '-6px' }}>
+          🌐 Агрессор: напала на {victimsOf(g, id).map((v) => COUNTRY_DEFS[v].name).join(', ')}{s.sanctions > 0 && ` · санкции −${Math.round(s.sanctions * 100)}% производства`}
+        </p>
+      )}
       <div class="card">
         <KV rows={[
           ['Отношения', <span>{relText(rel)} ({rel > 0 ? '+' : ''}{rel.toFixed(0)})</span>],
@@ -169,7 +180,7 @@ export function CountryDialog({ id, map }: { id: number; map: MapView }) {
             onClick={() => setUI({
               modal: {
                 kind: 'confirm', danger: true, title: '⚔️ Объявить войну?', okText: 'Объявить войну',
-                text: `${COUNTRY_DEFS[id].name}${p.pact ? ' — у вас пакт о ненападении! Нарушение испортит отношения со всем миром.' : ''}${p.trade ? ' Торговый договор будет разорван.' : ''} Её союзники вступят в войну.`,
+                text: warWarning(g, id),
                 ok: () => report(declareWar(g, me, id)),
               },
             })}
@@ -177,12 +188,111 @@ export function CountryDialog({ id, map }: { id: number; map: MapView }) {
             ⚔️ Объявить войну {warError(g, me, id) ? `(${warError(g, me, id)})` : ''}
           </button>
         )}
+        {!p.war && !warError(g, me, id) && (
+          <div class="small muted" style={{ textAlign: 'center' }}>
+            {warJustice(g, me, id).just ? `✅ Справедливая война: ${warJustice(g, me, id).reason}` : '⚠️ Без причины это агрессия — ООН осудит нас'}
+          </div>
+        )}
         <div class="grid2">
           <button class="btn ghost" onClick={() => { const cap = REGIONS[c.capital].center; close(); setUI({ tab: 'map', tile: cap }); map.select(cap); map.focusTile(cap, 1.3); }}>🗺️ На карте</button>
           <button class="btn ghost" onClick={close}>Закрыть</button>
         </div>
       </div>
     </>
+  );
+}
+
+const many = (n: number, one: string, more: string) => (n % 10 === 1 && n % 100 !== 11 ? one : more);
+
+/** Предупреждение перед объявлением войны: правы ли мы и чем ответит мир. */
+function warWarning(g: GameState, id: number): string {
+  const me = g.player;
+  const p = peekPair(g, me, id);
+  const name = COUNTRY_DEFS[id].name;
+  const tail = `${p.trade ? ' Торговый договор будет разорван.' : ''} Её союзники вступят в войну.`;
+  const j = warJustice(g, me, id);
+  if (j.just) return `${name}: справедливая война — ${j.reason}. Мир не осудит нас${isAggressor(g, id) ? ', а её жертвы станут нам ближе' : ''}.${tail}`;
+  const f = forecast(g, me, id);
+  const names = f.coalition.slice(0, 3).map((k) => COUNTRY_DEFS[k].name).join(', ') + (f.coalition.length > 3 ? ` и ещё ${f.coalition.length - 3}` : '');
+  const n = f.coalition.length;
+  const council = f.veto >= 0
+    ? `${f.veto === me ? 'Мы сами наложим вето в Совбезе' : `${COUNTRY_DEFS[f.veto].name} наложит вето в Совбезе`} — коалиции не будет, но`
+    : `Вето никто не наложит: ${n ? `${countriesN(n)} (${names}) ${many(n, 'объявит', 'объявят')} нам войну, ` : ''}будет эмбарго на оружие,`;
+  return `${name} нам не угрожает — это агрессия${p.pact ? ' и нарушение пакта о ненападении' : ''}. ООН осудит нас. ${council} `
+    + `санкции введут ${countriesN(f.sanctions.length)} (−${Math.round(f.loss * 100)}% производства), а ${name} получит деньги и оружие от всего мира.${tail}`;
+}
+
+/** ООН: дела об агрессии — кто напал, что решил Совбез, кто помогает жертве. Со стороны можно помочь. */
+function UNCard() {
+  const g = getGame()!;
+  const me = g.player;
+  if (!g.un.length) return null;
+  const mine = (cs: UNCase) => (cs.aggressor === me || cs.victim === me ? 1 : 0);
+  const list = [...g.un].sort((x, y) => mine(y) - mine(x) || y.since - x.since);
+  return (
+    <Card
+      title="🌐 ООН" sub={`${list.length}`}
+      hint={`Кто напал без причины — агрессор. Справедливая война — только помощь жертве агрессии или удар по тому, кто сам готовил нападение. `
+        + `Совбез (${P5.map((k) => COUNTRY_DEFS[k].name).join(', ')}) голосует: без вето соседи-добровольцы воюют с агрессором, весь мир вводит санкции и эмбарго на оружие; `
+        + 'при вето санкции вводят только несогласные. Жертва каждый месяц получает деньги и оружие. Мир с жертвой снимает санкции, а за удержанные земли — ещё два года санкций.'}
+    >
+      {list.map((cs) => <UNRow key={cs.id} cs={cs} />)}
+    </Card>
+  );
+}
+
+function UNRow({ cs }: { cs: UNCase }) {
+  const g = getGame()!;
+  const me = g.player;
+  const { aggressor: a, victim: b } = cs;
+  const A = COUNTRY_DEFS[a].name, B = COUNTRY_DEFS[b].name;
+  const active = cs.until === undefined;
+  const status = !active
+    ? `🏴 Захват ${cs.taken} рег. не признан — санкции ещё ${fmtDays(cs.until! - g.day)}`
+    : !cs.resolved
+      ? cs.vote > g.day ? `⏳ Совбез соберётся через ${Math.ceil(cs.vote - g.day)} дн.` : '🗳️ Совбез голосует'
+      : cs.veto === undefined
+        ? `✅ Резолюция принята · ⚔️ коалиция: ${cs.coalition.length} · 🚫 санкции: ${cs.sanctions.length} · 🔒 эмбарго`
+        : `❌ Вето: ${COUNTRY_DEFS[cs.veto].name} · 🚫 санкции: ${cs.sanctions.length}`;
+  const side = active && cs.resolved && me !== a && me !== b && g.countries[b].alive;
+  const join = side && cs.veto === undefined && !atWar(g, me, a);
+  const cost = aidCost(g);
+  return (
+    <div class="un-case">
+      <div class="row wrap" style={{ gap: '6px' }}>
+        <Flag id={a} /><b>{A}</b><span class="small muted">напала на</span><Flag id={b} /><b>{B}</b>
+      </div>
+      <div class="small muted">{status}</div>
+      {cs.aid.money > 0 && <div class="small">📦 Жертве передано: 💰 {fmt(cs.aid.money)}{cs.aid.arms >= 1 && <> · 🔫 {fmt(cs.aid.arms)}</>}</div>}
+      {a === me && (
+        <div class="small down">
+          Против нас: −{Math.round(STATS[me].sanctions * 100)}% производства{embargoed(g, me) ? ', оружие на рынке нам не продают' : ''}.
+          {active && ` Санкции снимут после мира с ${B}${cs.taken ? `; за удержанные земли (${cs.taken} рег.) — только через 2 года` : ''}.`}
+        </div>
+      )}
+      {a === me && active && atWar(g, me, b) && <PeaceButton enemy={b} block />}
+      {b === me && active && cs.resolved && (
+        <div class="small up">Нам помогают {countriesN(cs.donors.length)} — следующая помощь через {Math.max(0, Math.ceil(cs.nextAid - g.day))} дн.</div>
+      )}
+      {side && (
+        <div class="grid2" style={join ? { gridTemplateColumns: '1fr 1fr 1fr' } : undefined}>
+          <button class="btn sm" disabled={sanctions(g, me, a)} onClick={() => report(playerSanctions(g, cs.id), `🚫 Санкции против страны ${A} введены`)}>
+            {sanctions(g, me, a) ? '🚫 Введены' : '🚫 Санкции'}
+          </button>
+          <button class="btn sm green" disabled={g.countries[me].money < cost} onClick={() => report(playerAid(g, cs.id), `📦 ${B} благодарит за помощь`)}>
+            📦 {fmt(cost)}
+          </button>
+          {join && (
+            <button
+              class="btn sm danger" disabled={!!warError(g, me, a)}
+              onClick={() => setUI({ modal: { kind: 'confirm', danger: true, title: '⚔️ В коалицию ООН?', okText: 'Вступить', text: warWarning(g, a), ok: () => report(declareWar(g, me, a)) } })}
+            >
+              ⚔️ В коалицию
+            </button>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 

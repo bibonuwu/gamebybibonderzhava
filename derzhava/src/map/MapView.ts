@@ -5,6 +5,7 @@ import { mapDirty, mapFx } from '../game/state';
 import { WONDER_BY_ID } from '../game/wonders';
 import type { BuildingType, GameState } from '../game/types';
 import { COLS, COUNTRY_DEFS, N, NEIGH, REGIONS, REGION_OF, ROWS, TERRAIN, isWater } from '../game/world';
+import { SeaLife } from './SeaLife';
 
 const S = 12; // радиус гекса
 const HW = Math.sqrt(3) * S; // ширина гекса
@@ -68,6 +69,11 @@ export class MapView {
   private pingG = new Graphics();
   private progressG = new Graphics();
   private cloudLayer = new Container();
+  /** Рыбы, киты, корабли и чайки: слой под поверхностью воды и над ней. */
+  private seaUnder = new Container();
+  private seaOver = new Container();
+  private sea: SeaLife | null = null;
+  private depth = new Int16Array(N);
   private clouds: { sp: Sprite; shadow: Sprite; v: number }[] = [];
   private hoverTile = -1;
   private vel = { x: 0, y: 0, t: 0 }; // инерция после перетаскивания (пикс/мс)
@@ -85,6 +91,9 @@ export class MapView {
   private cityG = new Graphics();
   private cityLabels = new Container();
   private countryLabels = new Container();
+  /** Вблизи на чужой земле вместо зданий и городов — название страны-владельца. */
+  private foreignLabels = new Container();
+  private foreignText = new Map<number, Sprite>(); // регион → подпись страны
   private buildLayer = new Container();
   private battleLayer = new Container();
   private wonderLayer = new Container();
@@ -126,15 +135,21 @@ export class MapView {
     this.app.stage.addChild(this.world);
     const ocean = new Graphics().rect(-WORLD_W, -200, WORLD_W * 3, WORLD_H + 400).fill(DEEP_SEA);
     this.world.addChild(
-      ocean, this.waterG, this.waveA, this.waveB, this.coastG, this.terrainG, this.ownerG, this.previewG, this.falloutG, this.fxLayer,
-      this.glowG, this.borderG, this.selG, this.hoverG, this.selRing, this.pingG, this.cityG, this.buildLayer, this.progressG,
-      this.wonderLayer, this.battleLayer, this.cloudLayer, this.cityLabels, this.countryLabels,
+      ocean, this.waterG, this.seaUnder, this.waveA, this.waveB, this.coastG, this.terrainG, this.ownerG, this.previewG, this.falloutG,
+      this.fxLayer, this.glowG, this.borderG, this.selG, this.hoverG, this.selRing, this.pingG, this.cityG, this.buildLayer, this.progressG,
+      this.wonderLayer, this.battleLayer, this.seaOver, this.cloudLayer, this.cityLabels, this.foreignLabels, this.countryLabels,
     );
     this.screenFlash.alpha = 0;
     this.app.stage.addChild(this.screenFlash);
     this.drawWater();
     this.drawTerrain();
     this.makeClouds();
+    this.sea = new SeaLife({
+      renderer: this.app.renderer, depth: this.depth, tileAt: (x, y) => this.tileAtWorld(x, y), center: tileCenter,
+      width: WORLD_W, height: WORLD_H, flags: COUNTRY_COLORS.slice(0, 14),
+    });
+    this.seaUnder.addChild(this.sea.under);
+    this.seaOver.addChild(this.sea.over);
     this.bindInput();
     this.app.ticker.add(() => this.frame());
     window.addEventListener('resize', () => this.clamp());
@@ -144,7 +159,7 @@ export class MapView {
   // ---------- вода: глубина, пена у берегов, волны ----------
   private drawWater() {
     // расстояние до суши (в клетках) — чем дальше от берега, тем темнее море
-    const depth = new Int16Array(N).fill(99);
+    const depth = this.depth.fill(99);
     const queue: number[] = [];
     for (let t = 0; t < N; t++) {
       if (!isWater(t)) {
@@ -321,6 +336,7 @@ export class MapView {
     glow.stroke({ width: 4.5, color: 0xfff1c2, alpha: 0.6, cap: 'round' });
     this.drawCities();
     this.drawCountryLabels();
+    this.drawForeignLabels();
   }
 
   private drawCities() {
@@ -373,23 +389,48 @@ export class MapView {
     items.sort((a, b) => b.pri - a.pri);
     const placed: number[] = [];
     const pad = 2 / z;
+    const overlaps = (boxes: number[], x1: number, y1: number, x2: number, y2: number) => {
+      for (let i = 0; i < boxes.length; i += 4) {
+        if (x1 < boxes[i + 2] && x2 > boxes[i] && y1 < boxes[i + 3] && y2 > boxes[i + 1]) return true;
+      }
+      return false;
+    };
     for (const { label, owner } of items) {
       label.scale.set(sc);
-      if (owner < 0) {
+      // города подписываем только у себя — на чужой земле стоит название страны
+      if (owner !== gm.player) {
         label.visible = false;
         continue;
       }
       const w = label.width, h = label.height;
       const x1 = label.x - w / 2 - pad, x2 = label.x + w / 2 + pad, y1 = label.y - pad, y2 = label.y + h + pad;
-      let hit = false;
-      for (let i = 0; i < placed.length; i += 4) {
-        if (x1 < placed[i + 2] && x2 > placed[i] && y1 < placed[i + 3] && y2 > placed[i + 1]) {
-          hit = true;
-          break;
-        }
-      }
+      const hit = overlaps(placed, x1, y1, x2, y2);
       label.visible = !hit;
       if (!hit) placed.push(x1, y1, x2, y2);
+    }
+    // чужие страны вблизи: название повторяется по их земле, от «середины» страны наружу, не гуще одного на 180 пикселей
+    const fs = 0.4 / z;
+    const gap = 180 / z;
+    const taken = z >= 0.95 ? placed.slice() : [];
+    const spots = new Map<number, number[]>();
+    const foreign = [...this.foreignText.entries()].map(([rid, sp]) => {
+      const owner = gm.regions[rid].owner;
+      const mid = this.countryText.get(owner);
+      return { sp, owner, d: mid ? Math.hypot(sp.x - mid.x, sp.y - mid.y) : 0 };
+    });
+    foreign.sort((a, b) => a.d - b.d);
+    for (const { sp, owner } of foreign) {
+      sp.scale.set(fs);
+      const w = sp.width / 2 + pad, h = sp.height;
+      const x1 = sp.x - w, x2 = sp.x + w, y1 = sp.y - pad, y2 = sp.y + h + pad;
+      let near = spots.get(owner);
+      if (!near) spots.set(owner, (near = []));
+      let hit = overlaps(taken, x1, y1, x2, y2);
+      for (let i = 0; !hit && i < near.length; i += 2) hit = Math.hypot(sp.x - near[i], sp.y - near[i + 1]) < gap;
+      sp.visible = !hit;
+      if (hit) continue;
+      taken.push(x1, y1, x2, y2);
+      near.push(sp.x, sp.y);
     }
     // страны: своя всегда видна, дальше — по размеру
     const cs = Math.min(1.2, 0.3 / z);
@@ -443,6 +484,46 @@ export class MapView {
     });
   }
 
+  /** Под точкой каждого чужого региона — название страны (какие из них видны, решает cullLabels). */
+  private drawForeignLabels() {
+    const gm = this.game!;
+    REGIONS.forEach((reg) => {
+      const owner = gm.regions[reg.id].owner;
+      let sp = this.foreignText.get(reg.id);
+      if (owner < 0 || owner === gm.player) {
+        sp?.destroy();
+        this.foreignText.delete(reg.id);
+        return;
+      }
+      if (!sp) {
+        sp = new Sprite();
+        sp.anchor.set(0.5, 0);
+        const [cx, cy] = tileCenter(reg.center);
+        sp.position.set(cx, cy + 6);
+        this.foreignLabels.addChild(sp);
+        this.foreignText.set(reg.id, sp);
+      }
+      sp.texture = this.nameTexture(owner);
+      sp.tint = mixColor(0xffffff, COUNTRY_COLORS[owner], 0.3);
+    });
+  }
+
+  /** Одна текстура с названием на страну — общая для всех её регионов. */
+  private nameTexture(i: number): Texture {
+    const key = `name-${i}`;
+    let tex = this.textures.get(key);
+    if (tex) return tex;
+    const txt = new Text({
+      text: COUNTRY_DEFS[i].name.toUpperCase(),
+      style: { fontFamily: '"Cormorant SC", Georgia, serif', fontSize: 40, fontWeight: '700', fill: 0xffffff, stroke: { color: 0x0b1626, width: 6 }, letterSpacing: 3 },
+      resolution: 2,
+    });
+    tex = this.app.renderer.generateTexture({ target: txt, resolution: 2 });
+    this.textures.set(key, tex);
+    txt.destroy();
+    return tex;
+  }
+
   // ---------- здания ----------
   private texture(key: string, emoji: string, level: number, building: boolean): Texture {
     let tex = this.textures.get(key);
@@ -477,6 +558,8 @@ export class MapView {
     const seen = new Set<number>();
     for (const key in gm.buildings) {
       const tile = +key;
+      // чужие здания не показываем: там только название страны
+      if (gm.regions[REGION_OF[tile]].owner !== gm.player) continue;
       const b = gm.buildings[tile];
       seen.add(tile);
       const building = b.progress > 0;
@@ -601,8 +684,15 @@ export class MapView {
     const gm = this.game!;
     for (const [id, w] of Object.entries(gm.wonders)) {
       const def = WONDER_BY_ID[id];
-      if (!def || this.wonderSprites.has(id)) continue;
-      const sp = new Sprite(this.wonderTexture(id, def.icon));
+      let sp = this.wonderSprites.get(id);
+      // чудо на чужой земле не рисуем; захватим регион — появится
+      if (!def || gm.regions[w.region].owner !== gm.player) {
+        sp?.destroy();
+        this.wonderSprites.delete(id);
+        continue;
+      }
+      if (sp) continue;
+      sp = new Sprite(this.wonderTexture(id, def.icon));
       sp.anchor.set(0.5);
       const [cx, cy] = tileCenter(REGIONS[w.region].center);
       sp.position.set(cx + 9, cy - 9);
@@ -934,13 +1024,14 @@ export class MapView {
       mapDirty.territory = false;
       this.drawOwnership();
     }
-    if (mapDirty.buildings) {
+    // здания зависят и от границ: видны только свои
+    if (dirty) {
       mapDirty.buildings = false;
       this.syncBuildings();
       this.syncWonders();
       this.popIn = true;
+      this.syncProgress();
     }
-    if (dirty) this.syncProgress();
     this.syncBattles();
     this.syncFallout();
     this.spawnEffects();
@@ -1010,6 +1101,7 @@ export class MapView {
     this.buildLayer.visible = z >= 0.8;
     this.cityLabels.visible = z >= 0.95;
     this.countryLabels.visible = z < 0.75;
+    this.foreignLabels.visible = !this.countryLabels.visible;
     const pulse = 0.3 + Math.sin(now / 180) * 0.04;
     for (const sp of this.battleSprites.values()) sp.scale.set(pulse);
     const glow = 0.65 + Math.sin(now / 400) * 0.25;
@@ -1024,6 +1116,9 @@ export class MapView {
       if (this.shake <= 0) this.app.stage.position.set(0, 0);
     }
     this.animateEffects(dt);
+    const sw = this.app.screen.width, sh = this.app.screen.height;
+    const wx = this.world.x, wy = this.world.y;
+    this.sea?.update(dt, now, z, { x0: -wx / z, y0: -wy / z, x1: (sw - wx) / z, y1: (sh - wy) / z }, this.fancy);
   }
 
   /** Живая карта: море, облака, ореол своей страны, пульс выделения, «радар» над столицей. */
@@ -1200,6 +1295,11 @@ export class MapView {
         } else {
           this.lastTap = { t: now, x, y };
           const tile = this.tileAt(x, y);
+          // по воде расходятся круги, рыбы разбегаются
+          if (tile >= 0 && isWater(tile) && this.fancy) {
+            const z = this.world.scale.x;
+            this.sea?.poke((x - this.world.x) / z, (y - this.world.y) / z);
+          }
           if (tile >= 0) this.onTap?.(tile);
         }
       }
@@ -1236,8 +1336,13 @@ export class MapView {
 
   tileAt(sx: number, sy: number): number {
     const z = this.world.scale.x;
-    const x = (sx - this.world.x) / z - HW / 2;
-    const y = (sy - this.world.y) / z - S;
+    return this.tileAtWorld((sx - this.world.x) / z, (sy - this.world.y) / z);
+  }
+
+  /** Клетка под точкой в координатах карты. */
+  tileAtWorld(wx: number, wy: number): number {
+    const x = wx - HW / 2;
+    const y = wy - S;
     // пиксели → осевые координаты (pointy-top), затем округление куба
     const q = ((Math.sqrt(3) / 3) * x - (1 / 3) * y) / S;
     const r = ((2 / 3) * y) / S;

@@ -4,7 +4,8 @@ import { saveGame } from '../game/save';
 import { tick } from '../game/sim';
 import { emit, getGame, sfx, subscribe, toast } from '../game/state';
 
-export type Tab = 'map' | 'policy' | 'build' | 'diplo' | 'army' | 'market' | 'stats';
+export type Tab = 'map' | 'policy' | 'build' | 'army' | 'market' | 'stats';
+export type ArmyTab = 'army' | 'diplo';
 export type MarketTab = 'food' | 'arms' | 'sci' | 'corp';
 export type PolicyTab = 'econ' | 'society' | 'people' | 'power' | 'science';
 export type Modal =
@@ -14,7 +15,8 @@ export type Modal =
   | { kind: 'confirm'; title: string; text: string; ok: () => void; danger?: boolean; okText?: string }
   | { kind: 'menu' }
   | { kind: 'quests' }
-  | { kind: 'news' };
+  | { kind: 'news' }
+  | { kind: 'mail'; id?: number }; // без id — ящик, с id — письмо
 
 export const ui = {
   tab: 'map' as Tab,
@@ -23,6 +25,7 @@ export const ui = {
   modal: null as Modal | null,
   frac: 0,
   marketTab: 'food' as MarketTab,
+  armyTab: 'army' as ArmyTab, // «Армия» и «Дипломатия» — одна вкладка
   policyTab: 'econ' as PolicyTab, // какую подвкладку «Политики» открыть
 };
 

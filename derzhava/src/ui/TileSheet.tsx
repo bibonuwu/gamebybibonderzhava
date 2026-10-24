@@ -36,9 +36,9 @@ export function TileSheet({ map }: { map: MapView }) {
   const reg = REGIONS[rid];
   const rs = g.regions[rid];
   const owner = rs.owner;
-  const b = g.buildings[tile];
   const c = g.countries[me];
   const mine = owner === me;
+  const b = mine ? g.buildings[tile] : undefined; // чужие здания не показываем
   const isCenter = reg.center === tile;
   const cap = rs.cap0 * (1 + 0.15 * REGION_FARM[rid]) * (owner >= 0 ? STATS[owner].mods.cap : 1);
   const buildable = mine && !b && !isCenter ? BUILDING_TYPES.filter((t) => !placeError(g, me, tile, t)) : [];

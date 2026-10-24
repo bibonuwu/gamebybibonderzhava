@@ -117,7 +117,7 @@ export function celebrate(d: Omit<Deal, 'id'>) {
 export type Sfx =
   | 'click' | 'build' | 'done' | 'research' | 'coins' | 'war' | 'attack' | 'alarm' | 'victory' | 'defeat' | 'peace'
   | 'treaty' | 'notify' | 'event' | 'achievement' | 'error' | 'annex' | 'revolution' | 'recruit' | 'wonder' | 'quest'
-  | 'nuke' | 'siren';
+  | 'nuke' | 'siren' | 'mail' | 'paper';
 let sfxHandler: ((s: Sfx) => void) | null = null;
 export const setSfxHandler = (h: typeof sfxHandler) => {
   sfxHandler = h;

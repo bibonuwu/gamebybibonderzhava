@@ -96,12 +96,34 @@ export interface PairState {
   trade?: boolean;
   pact?: boolean;
   alliance?: boolean;
-  war?: { since: number; aRegions: number; bRegions: number };
+  war?: { since: number; aRegions: number; bRegions: number; un?: number }; // un — агрессор, против которого воюют по мандату ООН
   truce?: number; // день, до которого нельзя воевать
   grudge?: number;
   cooldown?: number; // день, до которого игрок не может повторить предложение
   tradeSince?: number; // день подписания торгового договора
   earned?: number; // сколько 💰 договор уже принёс игроку
+}
+
+export type UNVote = 'yes' | 'veto' | 'abstain';
+
+/** Дело ООН об агрессии: кто на кого напал, как решил Совбез, кто помогает жертве (см. un.ts). */
+export interface UNCase {
+  id: number;
+  aggressor: number;
+  victim: number;
+  since: number;
+  treachery?: boolean; // нарушен пакт о ненападении
+  vote: number; // день заседания Совбеза
+  playerVote?: UNVote; // голос игрока, если он постоянный член Совбеза
+  resolved?: boolean; // Совбез проголосовал
+  veto?: number; // кто наложил вето (нет — резолюция принята)
+  sanctions: number[]; // ввели санкции
+  donors: number[]; // раз в месяц помогают жертве деньгами и оружием
+  coalition: number[]; // воюют с агрессором по мандату ООН
+  aid: { money: number; arms: number }; // сколько жертва уже получила
+  nextAid: number;
+  taken: number; // сколько регионов жертвы агрессор удерживает
+  until?: number; // мир заключён, но захват не признан: санкции до этого дня
 }
 
 export interface Battle {
@@ -155,6 +177,39 @@ export interface Quest {
   done: boolean;
 }
 
+/** Вложение в письме: забирается одной кнопкой. */
+export interface LetterGift {
+  money?: number;
+  brains?: number;
+  food?: number;
+  stab?: number; // временная прибавка к стабильности
+  label: string;
+}
+
+/** Письмо в почтовом ящике игрока (тексты посчитаны при отправке, см. mail.ts). */
+export interface Letter {
+  id: number;
+  tpl: string; // шаблон письма
+  day: number;
+  from: string;
+  icon: string; // кто пишет
+  subject: string;
+  body: string[]; // абзацы
+  sign: string;
+  art: string; // картинка в шапке письма
+  paper: string; // бумага: пергамент, тетрадь, телеграмма…
+  stamp: string; // эмодзи на марке
+  seal: string; // цвет сургуча
+  read?: boolean;
+  gift?: LetterGift;
+  claimed?: boolean;
+  replies?: { label: string; hint: string }[];
+  answered?: number;
+  result?: string; // чем кончился ответ
+  target?: number; // страна-отправитель
+  vals?: number[]; // числа, посчитанные при отправке
+}
+
 export interface Proposal {
   id: number;
   from: number;
@@ -165,7 +220,7 @@ export interface Proposal {
 
 export interface PendingEvent {
   id: string;
-  kind?: 'demand'; // требование народа, а не случайное событие
+  kind?: 'demand' | 'un'; // требование народа или голосование в Совбезе ООН, а не случайное событие
   title: string;
   text: string;
   icon: string;
@@ -236,6 +291,7 @@ export interface GameState {
   battles: Battle[];
   missiles: Missile[];
   fallout: Record<number, number>; // регион → день, до которого держится радиоактивное заражение
+  un: UNCase[]; // дела ООН об агрессии
   nextId: number;
   log: LogEntry[];
   proposals: Proposal[];
@@ -244,6 +300,10 @@ export interface GameState {
   achievements: string[];
   wonders: Record<string, WonderState>;
   quests: Quest[];
+  mail: Letter[]; // почтовый ящик, свежие — первыми
+  mailSeen: string[]; // сюжетные письма, которые уже приходили
+  nextMailDay: number;
+  mailQueue?: { day: number; tpl: string; vals: number[]; target?: number }[]; // продолжения цепочек писем
   companies: Company[];
   geniuses: Genius[];
   market: MarketState;

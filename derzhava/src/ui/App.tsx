@@ -7,9 +7,12 @@ import { getGame, setGame } from '../game/state';
 import type { Difficulty, GameState } from '../game/types';
 import { COUNTRY_DEFS, REGIONS, REGION_OF, isWater } from '../game/world';
 import type { MapView } from '../map/MapView';
-import { Card, Flag, Seg } from './common';
+import { Card, Flag, Seg, Tabs } from './common';
+import { PanelFrame, trackTab } from './PanelFrame';
+import { PanelHero } from './PanelHero';
 import { AudioSettings } from './AudioSettings';
 import { MapControls, useHotkeys } from './Controls';
+import { MailButton } from './Mail';
 import { Banners, Modals, ProposalCard, QuestButton, Toasts } from './Modals';
 import { ArmyPanel } from './panels/ArmyPanel';
 import { BuildPanel } from './panels/BuildPanel';
@@ -19,7 +22,7 @@ import { PolicyPanel } from './panels/PolicyPanel';
 import { StatsPanel } from './panels/StatsPanel';
 import { TileSheet } from './TileSheet';
 import { BottomNav, PausedBadge, TopBar } from './TopBar';
-import { prefs, setUI, ui, useStore } from './store';
+import { prefs, setUI, ui, useStore, type ArmyTab } from './store';
 
 /** Выбор страны тапом по карте на стартовом экране. */
 let startPick: ((ci: number) => void) | null = null;
@@ -44,30 +47,48 @@ export function App({ map }: { map: MapView }) {
   map.fancy = prefs.fx;
   const g = getGame();
   if (!g) return <StartScreen map={map} />;
+  trackTab(ui.tab);
   return (
     <>
       <TopBar />
       <PausedBadge />
       {ui.tab !== 'map' && (
-        <div class="panel" key={ui.tab}>
-          <div class="panel-inner">
-            {ui.tab === 'policy' && <PolicyPanel />}
-            {ui.tab === 'build' && <BuildPanel map={map} />}
-            {ui.tab === 'diplo' && <DiploPanel map={map} />}
-            {ui.tab === 'army' && <ArmyPanel map={map} />}
-            {ui.tab === 'market' && <MarketPanel />}
-            {ui.tab === 'stats' && <StatsPanel />}
-          </div>
-        </div>
+        <PanelFrame tab={ui.tab} key={ui.tab}>
+          {ui.tab === 'policy' && <PolicyPanel />}
+          {ui.tab === 'build' && <BuildPanel map={map} />}
+          {ui.tab === 'army' && <WarAndPeace map={map} />}
+          {ui.tab === 'market' && <MarketPanel />}
+          {ui.tab === 'stats' && <StatsPanel />}
+        </PanelFrame>
       )}
       {ui.tab === 'map' && ui.tile >= 0 && <TileSheet map={map} />}
       <QuestButton />
+      <MailButton />
       <MapControls map={map} />
       <ProposalCard />
       <BottomNav />
       <Toasts />
       <Banners />
       <Modals map={map} />
+    </>
+  );
+}
+
+/** Армия и дипломатия — одна вкладка: война и мир в одном месте. */
+function WarAndPeace({ map }: { map: MapView }) {
+  const n = getGame()!.proposals.length;
+  return (
+    <>
+      <PanelHero kind="army" />
+      <Tabs<ArmyTab>
+        value={ui.armyTab}
+        onChange={(v) => setUI({ armyTab: v })}
+        options={[
+          { v: 'army', label: '⚔️ Армия' },
+          { v: 'diplo', label: n ? `🤝 Дипломатия (${n})` : '🤝 Дипломатия' },
+        ]}
+      />
+      {ui.armyTab === 'army' ? <ArmyPanel map={map} /> : <DiploPanel map={map} />}
     </>
   );
 }
@@ -210,7 +231,7 @@ function StartScreen({ map }: { map: MapView }) {
             <div>☢️ Изучите ветку «Атом» в науке — с ядерной бомбой на вас побоятся нападать (вкладка «Армия»).</div>
             <div>📋 Выполняйте задания (кнопка на карте) — за них дают награды.</div>
             <div>❔ Нажмите «?» у любой карточки — там подсказка.</div>
-            <div>⌨️ На ПК: пробел — пауза, 1–7 — вкладки, WASD — карта, Esc — меню.</div>
+            <div>⌨️ На ПК: пробел — пауза, 1–6 — вкладки, WASD — карта, Esc — меню.</div>
             <div>⚠️ Первые полтора года (≈9 минут на скорости ×1) боты не нападают — успейте окрепнуть.</div>
           </div>
         </Card>

@@ -63,6 +63,9 @@ export interface CountryStats {
   foodSell: number;
   foodMoney: number;
   hunger: number; // доля голодающих 0…1
+  // санкции ООН
+  sanctions: number; // на сколько упало производство (0…SANCTION_MAX)
+  sanctionLoss: number; // 💰/сек, которых казна недосчитывается
 }
 
 export let STATS: CountryStats[] = [];
@@ -123,6 +126,35 @@ export function difficultyMult(g: GameState, ci: number) {
   return ci === g.player ? 1 : DIFFICULTY[g.difficulty].bot;
 }
 
+/** Санкции всего мира отнимают у агрессора до четверти производства. */
+export const SANCTION_MAX = 0.25;
+/** На сколько упадёт производство x, если с ней перестанут торговать страны by: по их доле в мировых налогах. */
+export function sanctionLoss(g: GameState, x: number, by: ReadonlySet<number>) {
+  let w = 0, world = 0;
+  g.countries.forEach((c, k) => {
+    if (!c.alive || k === x) return;
+    const v = Math.max(0, c.lastGross);
+    world += v;
+    if (by.has(k)) w += v;
+  });
+  return SANCTION_MAX * Math.min(1, w / Math.max(1, world));
+}
+
+/** Санкции против каждой страны: пока агрессор воюет — в полную силу, за непризнанный захват — вполовину. */
+function sanctionPenalty(g: GameState, n: number): number[] {
+  const out: number[] = new Array(n).fill(0);
+  const by = new Map<number, { set: Set<number>; k: number }>();
+  for (const cs of g.un ?? []) {
+    if (!cs.resolved) continue;
+    const e = by.get(cs.aggressor) ?? { set: new Set<number>(), k: 0.5 };
+    for (const s of cs.sanctions) e.set.add(s);
+    if (cs.until === undefined) e.k = 1;
+    by.set(cs.aggressor, e);
+  }
+  for (const [x, e] of by) out[x] = sanctionLoss(g, x, e.set) * e.k;
+  return out;
+}
+
 export function computeAll(g: GameState) {
   const n = g.countries.length;
   if (REGION_DELTA.length !== REGIONS.length) {
@@ -140,9 +172,10 @@ export function computeAll(g: GameState) {
       popCap: 0, stabTarget: 50, stabParts: [], weapons: 1, morale: 1, quality: 1, power: 0, barracksMult: 1, tradePartners: 0, tradeMult: 1,
       deployed: 0, equip: 1, armsProd: 0, gdpIndex: 0, sciTarget: 0, brainsSci: 0, billTarget: 0, investIncome: 0, corpIncome: 0,
       companies: 0, corpValue: 0, sectorUnits: Object.fromEntries(SECTOR_KEYS.map((k) => [k, 0])) as Record<Sector, number>, geniuses: 0,
-      foodProd: 0, foodCons: 0, foodBuy: 0, foodSell: 0, foodMoney: 0, hunger: 0,
+      foodProd: 0, foodCons: 0, foodBuy: 0, foodSell: 0, foodMoney: 0, hunger: 0, sanctions: 0, sanctionLoss: 0,
     });
   }
+  const sanc = sanctionPenalty(g, n);
   REGION_FARM.fill(0);
   REGION_FORT.fill(0);
   PORT_TILES = Array.from({ length: n }, () => []);
@@ -244,6 +277,8 @@ export function computeAll(g: GameState) {
     if (c.unrest > 0.5) parts.push(['Недовольство на новых землях', -c.unrest]);
     if (c.money < 0) parts.push(['Долги казны', -15]);
     if (s.hunger > 0) parts.push(['Голод', -Math.max(3, 30 * s.hunger)]);
+    s.sanctions = sanc[i];
+    if (s.sanctions > 0) parts.push(['Санкции ООН', -s.sanctions * 25]);
     if (mods.stab) parts.push(['Технологии и чудеса', mods.stab]);
     const civ = Math.max(1, s.civPop);
     if (c.gov === 'dictatorship') parts.push(['Страх перед армией', Math.min(10, (c.soldiers / civ) * 1000)]);
@@ -255,10 +290,11 @@ export function computeAll(g: GameState) {
 
     // экономика
     const stabF = 0.6 + (0.4 * c.stability) / 100;
-    const prodEvent = 1 + modSum(g, c, 'prod');
+    const prodEvent = (1 + modSum(g, c, 'prod')) * (1 - s.sanctions);
     s.prod = c.baseProd * (1 + BUDGET_INFO.infra.prod[c.budget.infra]) * mods.prod * gov.money * stabF * diff * prodEvent * (1 - c.weariness / 250);
     s.taxIncome = (s.civPop / 1e5) * c.tax * s.prod;
     s.factoryIncome = 4 * factoryW[i] * c.baseProd * mods.factory * stabF * diff * prodEvent;
+    s.sanctionLoss = ((s.taxIncome + s.factoryIncome) * s.sanctions) / (1 - s.sanctions);
     s.portIncome = 2 * portW[i] * c.baseProd * stabF * diff;
     const budgetShare = BUDGET_COST[c.budget.edu] + BUDGET_COST[c.budget.health] + BUDGET_COST[c.budget.infra] + BUDGET_COST[c.budget.military];
     s.budgetCost = s.taxIncome * budgetShare;

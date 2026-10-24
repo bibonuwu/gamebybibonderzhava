@@ -6,6 +6,7 @@ import { resolveDemand } from './people';
 import { adoptGenius, companiesOf, geniusText } from './society';
 import { log, pick, rand, sfx } from './state';
 import type { Country, GameState, TempMod } from './types';
+import { voteUN } from './un';
 import { COUNTRY_DEFS, REGION_OF, REGIONS } from './world';
 
 /** t — страна, о которой событие (-1, если событие не про другую страну). */
@@ -277,6 +278,7 @@ export function triggerEvent(g: GameState) {
 export function resolveEvent(g: GameState, option: number) {
   if (!g.event) return;
   if (g.event.kind === 'demand') return resolveDemand(g, option);
+  if (g.event.kind === 'un') return voteUN(g, option);
   const ev = EVENTS.find((e) => e.id === g.event!.id);
   const opt = ev?.options[option];
   const t = g.event.target ?? -1;

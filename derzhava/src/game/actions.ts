@@ -5,6 +5,7 @@ import {
 import { attackPerSoldier, computeAll, pairKey, PORT_TILES, regionDefense, regionWeight, STATS } from './economy';
 import { banner, celebrate, fx, log, mapDirty, news, rand, sfx } from './state';
 import type { BuildingType, GameState, PairState } from './types';
+import { endWar, fearsUN, isAggressor, joinCoalition, liberatedOwner, onConquest, onDestroyed, openCase, sanctions, warJustice } from './un';
 import {
   COLS, COUNTRY_DEFS, NEIGH, REGIONS, REGION_OF, adjacentWaters, hexDist, isCoastalTile, isWater, terrainOf,
 } from './world';
@@ -309,6 +310,7 @@ export function transferRegion(g: GameState, rid: number, to: number, conquest: 
   const share = g.regions[rid].pop / Math.max(1, STATS[to]?.civPop ?? 1);
   g.regions[rid].owner = to;
   if (conquest) {
+    if (from >= 0) onConquest(g, from, to);
     g.regions[rid].pop *= 0.97;
     g.countries[to].unrest += Math.min(8, Math.max(1, share * 30));
     // компании со штаб-квартирой в регионе переходят к победителю (часть стоимости теряется)
@@ -353,6 +355,7 @@ function destroyCountry(g: GameState, ci: number, by: number) {
   }
   g.battles = g.battles.filter((b) => b.att !== ci && b.def !== ci);
   if (c.project) c.project = undefined;
+  onDestroyed(g, ci);
   if (ci === g.player) {
     g.gameOver = true;
     sfx('defeat');
@@ -380,7 +383,12 @@ export function declareWar(g: GameState, a: number, b: number, chain = true): st
   const err = warError(g, a, b);
   if (err) return err;
   const p = pair(g, a, b);
-  if (p.pact) {
+  // права ли a: помочь жертве агрессии или упредить чужое нападение мир одобрит, иначе — дело в ООН
+  const justice = warJustice(g, a, b);
+  const vsAggressor = isAggressor(g, b);
+  const treachery = !!p.pact && !justice.just;
+  if (p.pact && justice.just) p.pact = false;
+  else if (p.pact) {
     // предательство
     p.pact = false;
     p.grudge = 60;
@@ -391,15 +399,15 @@ export function declareWar(g: GameState, a: number, b: number, chain = true): st
   p.trade = false;
   p.war = { since: g.day, aRegions: STATS[Math.min(a, b)].regions.length, bRegions: STATS[Math.max(a, b)].regions.length };
   addRel(g, a, b, -50);
-  g.countries.forEach((c, i) => { if (c.alive && i !== a && i !== b) addRel(g, a, i, -4); });
+  if (!justice.just) g.countries.forEach((c, i) => { if (c.alive && i !== a && i !== b) addRel(g, a, i, -4); });
   g.countries[a].aiFlags.lastWarDay = g.day;
   if (involvesPlayer(g, a, b)) sfx('war');
   if (b === g.player) {
     log(g, `⚔️ ${cname(g, a)} объявляет вам войну!`, 'war', false);
     banner({ icon: '⚔️', title: 'Война!', text: `${cname(g, a)} объявляет вам войну`, kind: 'war' });
   } else if (a === g.player) {
-    log(g, `⚔️ Вы объявили войну: ${cname(g, b)}`, 'war', false);
-    banner({ icon: '⚔️', title: 'Война объявлена', text: cname(g, b), kind: 'war' });
+    log(g, `⚔️ Вы объявили войну: ${cname(g, b)}${justice.just ? ` — ${justice.reason}` : ''}`, 'war', false);
+    banner({ icon: '⚔️', title: 'Война объявлена', text: justice.just ? `${cname(g, b)} — ${justice.reason}` : cname(g, b), kind: 'war' });
   }
   else news(g, `⚔️ ${cname(g, a)} объявила войну стране ${cname(g, b)}`, 'war');
   if (chain) {
@@ -419,11 +427,14 @@ export function declareWar(g: GameState, a: number, b: number, chain = true): st
       else news(g, `🛡️ ${cname(g, ally)} вступает в войну против ${cname(g, a)} на стороне союзника`, 'war');
     }
   }
+  if (vsAggressor) joinCoalition(g, a, b);
+  else if (!justice.just) openCase(g, a, b, treachery);
   computeAll(g);
   return null;
 }
 
-export function makePeace(g: GameState, a: number, b: number) {
+/** quiet — без отдельной новости (мир коалиции ООН объявляется одной строкой). */
+export function makePeace(g: GameState, a: number, b: number, quiet = false) {
   const p = pair(g, a, b);
   if (!p.war) return;
   const me = g.player;
@@ -441,7 +452,8 @@ export function makePeace(g: GameState, a: number, b: number) {
   if (involvesPlayer(g, a, b)) {
     sfx('peace');
     log(g, `🕊️ Мир между ${cname(g, a)} и ${cname(g, b)}`, 'good', false);
-  } else news(g, `🕊️ Мир между ${cname(g, a)} и ${cname(g, b)}`, 'good');
+  } else if (!quiet) news(g, `🕊️ Мир между ${cname(g, a)} и ${cname(g, b)}`, 'good');
+  endWar(g, a, b);
   if (before) {
     computeAll(g);
     celebrate({
@@ -535,20 +547,30 @@ export function resolveBattle(g: GameState, bt: (typeof g.battles)[number]) {
   const center = REGIONS[bt.region].center;
   if (win) {
     fx({ kind: 'float', tile: center, text: '🔥' });
+    // коалиция ООН не захватывает, а освобождает: земли жертвы возвращаются ей
+    const to = liberatedOwner(g, bt.att, bt.def, bt.region);
+    const freed = to !== bt.att ? `${rname} освобождён и возвращён стране ${cname(g, to)}` : '';
+    if (freed) addRel(g, bt.att, to, 15);
     if (bt.att === g.player) {
       g.counters.wins = (g.counters.wins ?? 0) + 1;
       g.counters.conquered = (g.counters.conquered ?? 0) + 1;
       g.counters.lastWinDay = g.day;
       sfx('victory');
-      log(g, `🏆 Победа! ${rname} захвачен (${lossTxt})`, 'good', false);
-      banner({ icon: '🏆', title: 'Победа!', text: `${rname} захвачен · ${lossTxt}`, kind: 'gold' });
+      log(g, `🏆 Победа! ${freed || `${rname} захвачен`} (${lossTxt})`, 'good', false);
+      banner({ icon: '🏆', title: 'Победа!', text: `${freed || `${rname} захвачен`} · ${lossTxt}`, kind: 'gold' });
+    } else if (freed && to === g.player) {
+      sfx('victory');
+      log(g, `🕊️ Коалиция ООН освободила ${rname} и вернула его нам`, 'good', false);
+      banner({ icon: '🕊️', title: 'Земли возвращены', text: `${cname(g, bt.att)} освободила ${rname}`, kind: 'good' });
+    } else if (freed) {
+      news(g, `🕊️ ${cname(g, bt.att)}: ${freed}`, 'good');
     } else if (bt.def === g.player) {
       sfx('defeat');
       log(g, `💥 Мы потеряли ${rname} (${lossTxt})`, 'bad', false);
       banner({ icon: '💥', title: 'Регион потерян', text: `${rname} · ${lossTxt}`, kind: 'war' });
     }
     if (bt.def < 0) g.countries.forEach((c, i) => { if (c.alive && i !== bt.att) addRel(g, bt.att, i, -2); });
-    transferRegion(g, bt.region, bt.att, true);
+    transferRegion(g, bt.region, to, true);
   } else {
     fx({ kind: 'float', tile: center, text: '🛡️' });
     if (bt.att === g.player) {
@@ -587,6 +609,7 @@ export function willAccept(g: GameState, a: number, b: number, kind: DiploKind):
   if (per === 'fanatic' && g.countries[a].religion !== g.countries[b].religion) need += 15;
   if (kind !== 'trade' && sharedFoe(g, a, b) >= 0) need -= 25;
   if (kind === 'trade' && STATS[b].tradePartners >= maxTrade(g, b)) return false;
+  if (sanctions(g, b, a)) return false; // кто ввёл санкции, с агрессором договоров не заключает
   return g.rel[a][b] >= need;
 }
 
@@ -605,6 +628,7 @@ export function diploError(g: GameState, a: number, b: number, kind: DiploKind):
   if (p.war) return 'Вы воюете';
   if (p[kind]) return 'Уже заключён';
   if (kind === 'trade' && STATS[a].tradePartners >= maxTrade(g, a)) return `Не больше ${maxTrade(g, a)} торговых договоров`;
+  if (kind === 'trade' && sanctions(g, a, b)) return 'Действуют наши санкции';
   if (a === g.player && p.cooldown && p.cooldown > g.day) return `Повторить можно через ${Math.ceil(p.cooldown - g.day)} дн.`;
   return null;
 }
@@ -643,6 +667,7 @@ export function sign(g: GameState, a: number, b: number, kind: DiploKind) {
 export function propose(g: GameState, a: number, b: number, kind: DiploKind): string {
   const err = diploError(g, a, b, kind);
   if (err) return err;
+  if (sanctions(g, b, a)) return `${cname(g, b)} отказывается: она ввела против вас санкции`;
   if (willAccept(g, a, b, kind)) {
     sign(g, a, b, kind);
     return `${cname(g, b)} согласна: ${DIPLO_NAME[kind].toLowerCase()}`;
@@ -694,7 +719,7 @@ export function demandTribute(g: GameState, a: number, b: number): string {
     return `${cname(g, b)} платит дань: +${fmtK(amount)} 💰`;
   }
   addRel(g, a, b, -15);
-  if (target.personality === 'aggressor' && !warError(g, b, a) && rand(g) < 0.4) {
+  if (target.personality === 'aggressor' && !warError(g, b, a) && !fearsUN(g, b, a) && rand(g) < 0.4) {
     declareWar(g, b, a);
     return `${cname(g, b)} в ярости и объявляет войну!`;
   }
@@ -716,6 +741,7 @@ export function peaceScore(g: GameState, a: number, b: number) {
 }
 /** Условия мира от бота b: 0 — даром, число — выкуп в 💰, null — мира не будет. */
 export function peaceTerms(g: GameState, a: number, b: number): number | null {
+  if (peekPair(g, a, b).war?.un === a) return null; // коалиция ООН не даёт агрессору сепаратного мира
   const sc = peaceScore(g, a, b);
   if (sc > 0.35) return 0;
   if (sc < -0.3) return null;

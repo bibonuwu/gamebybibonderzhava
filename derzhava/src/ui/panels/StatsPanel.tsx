@@ -6,6 +6,7 @@ import { getGame } from '../../game/state';
 import type { Sample } from '../../game/types';
 import { COUNTRY_DEFS } from '../../game/world';
 import { Card, Flag, More, Seg, Tabs } from '../common';
+import { PanelHero } from '../PanelHero';
 import { setUI, useStore } from '../store';
 
 type Metric = 'money' | 'brains' | 'pop' | 'mr' | 'br' | 'pr';
@@ -106,7 +107,7 @@ export function StatsPanel() {
   );
   return (
     <>
-      <h2 class="ptitle">Статистика</h2>
+      <PanelHero kind="stats" />
       <Card title="📈 Развитие">
         <Tabs value={metric} onChange={setMetric} options={METRICS.map((x) => ({ v: x.v, label: x.label }))} />
         <Chart data={data} metric={metric} color={m.color} />

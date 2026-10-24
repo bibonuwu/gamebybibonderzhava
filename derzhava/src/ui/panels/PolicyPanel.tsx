@@ -11,6 +11,7 @@ import { inviteInvestors, investorsCost, investorsError, richTax, richTaxError, 
 import { emit, getGame, log } from '../../game/state';
 import type { BudgetKey, GovType, ReligionPolicy } from '../../game/types';
 import { Bar, Card, KV, More, Rate, Seg, Tabs } from '../common';
+import { PanelHero } from '../PanelHero';
 import { report, setUI, ui, useStore, type PolicyTab } from '../store';
 
 type Sub = PolicyTab;
@@ -24,7 +25,7 @@ export function PolicyPanel() {
   });
   return (
     <>
-      <h2 class="ptitle">Политика</h2>
+      <PanelHero kind="policy" />
       <Tabs
         value={sub}
         onChange={setSub}
@@ -71,6 +72,9 @@ export function IncomeTable() {
       rows={[
         ...rows.filter(([, v]) => Math.abs(v) > 0.01).map(([k, v]): [string, ComponentChildren] => [k, <Rate v={v} />]),
         [<b>Итого</b>, <Rate v={s.moneyRate} />],
+        ...(s.sanctions > 0
+          ? [[`🚫 Санкции ООН (−${Math.round(s.sanctions * 100)}% производства)`, <span class="down">−{fmt(s.sanctionLoss)}/сек</span>] as [string, ComponentChildren]]
+          : []),
       ]}
     />
   );

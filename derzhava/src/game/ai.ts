@@ -21,6 +21,7 @@ import {
 } from './society';
 import { log, news, pick, rand, sfx } from './state';
 import type { BudgetKey, BuildingType, Company, GameState, Genius, GovType, Proposal, ReligionPolicy, Sector } from './types';
+import { fearsUN, sanctions, victimsOf } from './un';
 import { rivals, startWonder, WONDERS, wonderCost, wonderError, wonderInRegion } from './wonders';
 import { REGIONS, REGION_OF } from './world';
 
@@ -40,7 +41,7 @@ const PLAYER_ATTACK_GAP = { easy: 45, normal: 30, hard: 20 };
 const PLAYER_WAR_GOAL = { easy: 2, normal: 3, hard: 4 };
 const smart = (g: GameState) => rand(g) < SKILL[g.difficulty];
 
-interface Threat {
+export interface Threat {
   enemies: number[];
   enemyPower: number; // суммарная мощь противников
   danger: number; // мощь, от которой стоит иметь защиту
@@ -72,7 +73,7 @@ export function aiTurn(g: GameState, i: number) {
 }
 
 // ---------- оценка обстановки ----------
-function assessThreat(g: GameState, i: number): Threat {
+export function assessThreat(g: GameState, i: number): Threat {
   const enemies = enemiesOf(g, i);
   let enemyPower = 0;
   for (const e of enemies) enemyPower += STATS[e].power;
@@ -246,7 +247,7 @@ function weightedPick(g: GameState, w: Partial<Record<BuildingType, number>>): B
 }
 
 /** Новое здание или улучшение старого — что дешевле за единицу эффекта (с содержанием за год). */
-function bestBuildOption(g: GameState, i: number, type: BuildingType, careful: boolean) {
+export function bestBuildOption(g: GameState, i: number, type: BuildingType, careful: boolean) {
   const c = g.countries[i];
   const upkeepK = BUILDINGS[type].upkeep * c.baseProd * 365;
   let best: { tile: number; cost: number; upgrade: boolean } | null = null;
@@ -382,8 +383,15 @@ function seekPeace(g: GameState, i: number, th: Threat) {
     if (e === g.player) goal = Math.min(goal, PLAYER_WAR_GOAL[g.difficulty]);
     const losing = th.underAttack && STATS[e].power > s.power * 1.5;
     const broke = c.money < -s.taxIncome * 30;
+    if (p.war.un !== undefined) {
+      // коалиция ООН воюет, пока агрессор не помирится с жертвой; сепаратный мир — только если сами проигрываем
+      if (p.war.un !== i && (losing || broke)) makePeace(g, i, e);
+      continue;
+    }
+    // агрессор под санкциями и против коалиции ищет мира с жертвой быстрее
+    const pressed = dur > 90 && victimsOf(g, i).includes(e) && (s.sanctions > 0.06 || th.enemies.length > 1);
     // peaceScore(e, i) — насколько мир нужен нам самим
-    const want = peaceScore(g, e, i) > 0.35 || gained >= goal || losing || broke || dur > 400;
+    const want = peaceScore(g, e, i) > 0.35 || gained >= goal || losing || broke || pressed || dur > 400;
     if (!want) continue;
     if (e === g.player) {
       // победитель берёт контрибуцию
@@ -460,7 +468,7 @@ function considerWar(g: GameState, i: number, th: Threat) {
     return;
   }
   if (g.day < WAR_GRACE_DAYS || th.enemies.length) return;
-  if (g.day - (c.aiFlags.lastWarDay ?? -999) <= (c.personality === 'aggressor' ? 150 : 240)) return;
+  if (g.day - (c.aiFlags.lastWarDay ?? -999) <= (c.personality === 'aggressor' ? 365 : 540)) return;
   if (c.weariness > 25 || c.stability < 35 || c.money < 0) return;
   const leader = worldLeader(g);
   let best = -1, bestScore = 0;
@@ -469,6 +477,11 @@ function considerWar(g: GameState, i: number, th: Threat) {
     if (sc > bestScore) { bestScore = sc; best = j; }
   }
   if (best >= 0 && rand(g) < 0.35 * DIFFICULTY[g.difficulty].aggression) {
+    // ООН ополчит против агрессора весь мир: передумав, к мыслям о войне вернётся не скоро
+    if (fearsUN(g, i, best)) {
+      c.aiFlags.lastWarDay = g.day;
+      return;
+    }
     // сначала подготовка: закупка оружия, запасы еды, мобилизация
     c.aiFlags.prepTarget = best;
     c.aiFlags.prepUntil = g.day + (best === g.player ? 25 : 15);
@@ -703,7 +716,7 @@ export function answerProposal(g: GameState, id: number, accept: boolean) {
       log(g, `💰 Дань выплачена: ${cname(g, from)}`, 'info');
     } else {
       addRel(g, me, from, -20);
-      if (!warError(g, from, me) && rand(g) < 0.5) declareWar(g, from, me);
+      if (!warError(g, from, me) && !fearsUN(g, from, me) && rand(g) < 0.5) declareWar(g, from, me);
       else log(g, `${cname(g, from)} недовольна отказом`, 'info');
     }
     return;
@@ -754,6 +767,7 @@ export function driftRelations(g: GameState) {
         if (p.war) base -= 70;
         if (p.grudge) { base -= p.grudge; p.grudge *= 0.985; if (p.grudge < 1) delete p.grudge; }
       }
+      if (sanctions(g, a, b) || sanctions(g, b, a)) base -= 20;
       // враг моего врага — мой друг
       if (enemies[a].some((k) => enemies[b].includes(k))) base += 12;
       if (borders[a].has(b)) base -= 6;

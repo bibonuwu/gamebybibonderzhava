@@ -211,6 +211,19 @@ const SOUNDS: Record<Sfx, (t: number) => void> = {
     noise(t + 0.1, 4.5, { vol: 0.3, type: 'lowpass', f: 900, to: 120, attack: 0.4, wet: 0.6 });
     boom(t + 1.2, 0.4, 55);
   },
+  mail: (t) => {
+    // почтовый рожок и колокольчик: пришло письмо
+    tone(N.G4, t, 0.16, { type: 'triangle', vol: 0.05, wet: 0.4 });
+    tone(N.C5, t + 0.14, 0.32, { type: 'triangle', vol: 0.055, wet: 0.4 });
+    bell(N.E6, t + 0.3, 1.1, 0.06);
+    bell(N.G6, t + 0.42, 1.3, 0.045);
+  },
+  paper: (t) => {
+    // шорох бумаги: конверт открывается
+    noise(t, 0.18, { vol: 0.07, type: 'bandpass', f: 2600, q: 0.8, to: 4200, wet: 0.15 });
+    noise(t + 0.16, 0.22, { vol: 0.06, type: 'bandpass', f: 3400, q: 0.7, to: 1800, wet: 0.15 });
+    shimmer(t + 0.3, 0.5, 0.015);
+  },
   siren: (t) => {
     // воздушная тревога: два воя вверх-вниз
     for (const k of [0, 1.1]) {

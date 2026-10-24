@@ -124,7 +124,6 @@ const TABS: { id: Tab; ic: string; label: string }[] = [
   { id: 'map', ic: '🗺️', label: 'Карта' },
   { id: 'policy', ic: '📜', label: 'Политика' },
   { id: 'build', ic: '🏗️', label: 'Стройка' },
-  { id: 'diplo', ic: '🤝', label: 'Дипломатия' },
   { id: 'army', ic: '⚔️', label: 'Армия' },
   { id: 'market', ic: '🏪', label: 'Рынок' },
   { id: 'stats', ic: '📊', label: 'Статистика' },
@@ -146,8 +145,7 @@ export function BottomNav() {
   useStore();
   const g = getGame()!;
   const badges: Partial<Record<Tab, number>> = {
-    diplo: g.proposals.length,
-    army: g.battles.filter((b) => b.att === g.player || b.def === g.player).length,
+    army: g.proposals.length + g.battles.filter((b) => b.att === g.player || b.def === g.player).length,
     market: STATS[g.player]?.hunger > 0 ? 1 : 0,
   };
   const dots = hints(g);
@@ -156,7 +154,12 @@ export function BottomNav() {
       {TABS.map((t, i) => (
         <button
           key={t.id} class={ui.tab === t.id ? 'active' : ''} title={`${t.label} (${i + 1})`}
-          onClick={() => setUI({ tab: t.id, tile: t.id === 'map' ? ui.tile : -1, ...(t.id === 'policy' && dots.policy && ui.tab !== 'policy' ? { policyTab: 'science' as const } : {}) })}
+          onClick={() => setUI({
+            tab: t.id, tile: t.id === 'map' ? ui.tile : -1,
+            ...(t.id === 'policy' && dots.policy && ui.tab !== 'policy' ? { policyTab: 'science' as const } : {}),
+            // пришли предложения от стран — сразу открываем дипломатию
+            ...(t.id === 'army' && g.proposals.length && ui.tab !== 'army' ? { armyTab: 'diplo' as const } : {}),
+          })}
         >
           <span class="ic">{t.ic}</span>
           <span class="lb">{t.label}</span>

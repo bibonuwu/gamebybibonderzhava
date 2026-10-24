@@ -5,6 +5,7 @@ import { computeAll, STATS } from './economy';
 import { fmt } from './format';
 import { log, news, pick, rand, sfx } from './state';
 import type { GameState, MarketGood } from './types';
+import { embargoed } from './un';
 
 export const newGood = (base: number): MarketGood => ({ stock: 1, norm: 1, base, price: base, shock: 0, hist: [] });
 
@@ -60,6 +61,7 @@ function trade(g: GameState, ci: number, good: 'food' | 'arms', qty: number, buy
   qty = Math.floor(qty);
   if (qty <= 0) return buy ? 'Нечего покупать' : 'Нечего продавать';
   if (buy) {
+    if (good === 'arms' && embargoed(g, ci)) return 'Эмбарго ООН: агрессору оружие не продают';
     if (qty > maxBuy(m)) return 'На мировом рынке столько нет';
     const cost = buyQuote(m, qty);
     if (c.money < cost) return 'Не хватает денег';

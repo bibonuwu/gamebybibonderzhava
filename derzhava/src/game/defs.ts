@@ -240,5 +240,5 @@ export const FOOD_SELF: Record<string, number> = {
 };
 
 export const START_YEAR = 2026;
-export const WAR_GRACE_DAYS = 120;
+export const WAR_GRACE_DAYS = 365;
 export const BATTLE_DAYS = 20;

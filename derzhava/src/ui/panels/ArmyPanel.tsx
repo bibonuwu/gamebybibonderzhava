@@ -7,6 +7,7 @@ import { BATTLE_DAYS, BUDGET_INFO, BUDGET_LEVELS } from '../../game/defs';
 import { computeAll, equipFactor, regionDefense, STATS } from '../../game/economy';
 import { fmt, fmtDays } from '../../game/format';
 import { emit, getGame, toast } from '../../game/state';
+import { victimsOf } from '../../game/un';
 import { COUNTRY_DEFS, REGIONS } from '../../game/world';
 import { Bar, Card, Flag, KV, More, Rate, Seg } from '../common';
 import { NuclearCard } from './NuclearCard';
@@ -29,7 +30,6 @@ export function ArmyPanel({ map }: { map: MapView }) {
   const steps = [0.001, 0.005, 0.01].map((k) => Math.floor(s.civPop * k));
   return (
     <>
-      <h2 class="ptitle">Армия</h2>
       <Card title="💂 Вооружённые силы" sub={`мощь ⚔️ ${fmt(s.power)}`} hint="Контракт: сильнее и дороже. Призыв: дёшево и много, но хуже качество и злит людей. Военный бюджет поднимает мораль.">
         <KV rows={[
           ['Солдат', `${fmt(c.soldiers)} / ${fmt(limit)}`],
@@ -108,7 +108,7 @@ export function ArmyPanel({ map }: { map: MapView }) {
           ))}
         </Card>
       )}
-      <Card title="🎯 Цели" hint="Враги и нейтральные земли рядом. Чтобы напасть на страну, сначала объявите ей войну во вкладке «Дипломатия». Порт позволяет высаживаться с моря.">
+      <Card title="🎯 Цели" hint="Враги и нейтральные земли рядом. Чтобы напасть на страну, сначала объявите ей войну на соседней вкладке «Дипломатия». Порт позволяет высаживаться с моря.">
         {targets.length === 0 && <div class="small muted">Нет доступных целей.</div>}
         {targets.map((t) => (
           <div class="list-item" key={t.rid}>
@@ -137,6 +137,10 @@ export function PeaceButton({ enemy, block }: { enemy: number; block?: boolean }
   const g = getGame()!;
   const t = peaceTerms(g, g.player, enemy);
   const cls = `btn green ${block ? 'block' : 'sm'}`;
+  if (peekPair(g, g.player, enemy).war?.un === g.player) {
+    const v = victimsOf(g, g.player).map((x) => COUNTRY_DEFS[x].name).join(', ');
+    return <button class={cls} disabled>🌐 Коалиция ООН: сначала мир с {v || 'жертвой'}</button>;
+  }
   if (t === null) return <button class={cls} disabled>🕊️ Мира не хотят</button>;
   const ask = () => {
     const msg = proposePeace(g, g.player, enemy, t > 0);

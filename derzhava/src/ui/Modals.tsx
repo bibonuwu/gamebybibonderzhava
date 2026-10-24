@@ -9,6 +9,7 @@ import { banners, deals, dismissToast, emit, getGame, setGame, toast, toasts, ty
 import { COUNTRY_DEFS, REGIONS } from '../game/world';
 import type { MapView } from '../map/MapView';
 import { AudioSettings } from './AudioSettings';
+import { MailModal } from './Mail';
 import { Bar, CountUp, KV, More, Rate, relColor } from './common';
 import { AttackDialog } from './panels/ArmyPanel';
 import { CountryDialog, ProposalRow } from './panels/DiploPanel';
@@ -24,8 +25,9 @@ export function Modals({ map }: { map: MapView }) {
     const ev = g.event;
     return (
       <div class="modal-bg">
-        <div class={`modal ${ev.kind === 'demand' ? 'demand' : ''}`}>
+        <div class={`modal ${ev.kind ?? ''}`}>
           {ev.kind === 'demand' && <div class="demand-tag">📢 Голос народа</div>}
+          {ev.kind === 'un' && <div class="demand-tag un">🌐 Совет Безопасности ООН</div>}
           <div class="m-ic">{ev.icon}</div>
           <h2>{ev.title}</h2>
           <p>{ev.text}</p>
@@ -42,6 +44,7 @@ export function Modals({ map }: { map: MapView }) {
   if (deals.length) return <DealModal key={deals[0].id} d={deals[0]} />;
   const m = ui.modal;
   if (!m) return null;
+  if (m.kind === 'mail') return <MailModal id={m.id} />;
   const close = () => setUI({ modal: null });
   let body: ComponentChildren = null;
   if (m.kind === 'country') body = <CountryDialog id={m.id} map={map} />;
@@ -171,7 +174,7 @@ function Menu({ map }: { map: MapView }) {
           <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / стрелки</span><span>двигать карту</span>
           <span><kbd>Q</kbd> <kbd>E</kbd> / колёсико</span><span>отдалить / приблизить</span>
           <span><kbd>H</kbd></span><span>к столице</span>
-          <span><kbd>J</kbd> · <kbd>N</kbd></span><span>задания · новости</span>
+          <span><kbd>J</kbd> · <kbd>N</kbd> · <kbd>M</kbd></span><span>задания · новости · почта</span>
           <span><kbd>Esc</kbd></span><span>закрыть</span>
         </div>
         <div class="small muted" style={{ marginTop: '6px' }}>На телефоне: двойной тап — приблизить, щипок — масштаб.</div>

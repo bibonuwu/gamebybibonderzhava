@@ -13,13 +13,14 @@ import { emit, getGame } from '../../game/state';
 import type { Genius } from '../../game/types';
 import { COUNTRY_DEFS } from '../../game/world';
 import { Bar, Card, Flag, KV, More, Rate, Seg, Tabs } from '../common';
+import { PanelHero } from '../PanelHero';
 import { report, setUI, ui, useStore, type MarketTab } from '../store';
 
 export function MarketPanel() {
   useStore();
   return (
     <>
-      <h2 class="ptitle">Рынок</h2>
+      <PanelHero kind="market" />
       <Tabs<MarketTab>
         value={ui.marketTab}
         onChange={(v) => setUI({ marketTab: v })}

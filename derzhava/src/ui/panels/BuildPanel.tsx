@@ -1,4 +1,5 @@
 import { bestTileFor, buildCost, startBuild, startUpgrade, upgradeError } from '../../game/actions';
+import { advise, applyAdvice, applyAllAdvice, GAIN, GOOD, optionFor, sectors, WEAK } from '../../game/advisor';
 import { BUILDINGS, BUILDING_TYPES, TECH_BY_ID } from '../../game/defs';
 import { STATS } from '../../game/economy';
 import { fmt } from '../../game/format';
@@ -8,6 +9,7 @@ import {
 } from '../../game/wonders';
 import { COUNTRY_DEFS, REGIONS, REGION_OF } from '../../game/world';
 import { Bar, Card, Flag } from '../common';
+import { PanelHero } from '../PanelHero';
 import { report, setUI, useStore } from '../store';
 import type { MapView } from '../../map/MapView';
 
@@ -34,7 +36,8 @@ export function BuildPanel({ map }: { map: MapView }) {
 
   return (
     <>
-      <h2 class="ptitle">Стройка</h2>
+      <PanelHero kind="build" />
+      <Advisor show={show} />
       <Card title="🔨 Строится" sub={`${s.constructing} / ${s.slots} мест`}>
         {building.length === 0 && <div class="small muted">Сейчас ничего не строится.</div>}
         {building.map(({ tile, b }) => (
@@ -103,6 +106,72 @@ export function BuildPanel({ map }: { map: MapView }) {
         })}
       </Card>
     </>
+  );
+}
+
+const level = (score: number) => (score < WEAK ? 'weak' : score < GOOD ? 'mid' : 'good');
+
+/** Шкала отраслей страны: что ослаблено — и что построить, чтобы подтянуть. Клетку выбирать не нужно. */
+function Advisor({ show }: { show: (tile: number) => void }) {
+  const g = getGame()!;
+  const me = g.player;
+  const c = g.countries[me];
+  const s = STATS[me];
+  const list = sectors(g, me);
+  const advice = advise(g, me, list);
+  const free = s.slots - s.constructing;
+  const canAll = free > 0 && advice.some((a) => c.money >= a.cost);
+  return (
+    <Card title="🧭 Советник" sub={`мест для стройки ${free} из ${s.slots}`}
+      hint="Шкала показывает, насколько крепка каждая сторона страны. Красное — ослаблено. Советник сам выберет лучшее место и предложит, что построить или улучшить.">
+      <div class="adv-scales">
+        {list.map((sec) => (
+          <div class={`adv-row ${level(sec.score)}`} key={sec.id}>
+            <span class="adv-name">{sec.icon} {sec.name}</span>
+            <span class="adv-scale"><i style={{ width: `${Math.round(sec.score * 100)}%` }} /></span>
+            <span class="adv-pct num">{Math.round(sec.score * 100)}%</span>
+            <span class="adv-note small muted">
+              {sec.score < WEAK && <b class="adv-tag">ослаблено</b>}
+              {sec.note}
+              {sec.score < WEAK && !advice.some((a) => a.sector === sec) && !optionFor(g, me, sec) && ' · строить негде: нет подходящих клеток'}
+            </span>
+          </div>
+        ))}
+      </div>
+      <div class="sep" />
+      <div class="small muted" style={{ marginBottom: '2px' }}>💡 Советую построить</div>
+      {advice.length === 0 && <div class="small muted">Свободных клеток под нужные здания нет — улучшайте старые или расширяйте страну.</div>}
+      {advice.map((a) => {
+        const def = BUILDINGS[a.type];
+        const b = g.buildings[a.tile];
+        return (
+          <div class="list-item" key={a.sector.id}>
+            <span class="big-ic">{def.icon}</span>
+            <div class="grow tap" onClick={() => show(a.tile)}>
+              <div><b>{a.upgrade ? `Улучшить: ${def.name} ур. ${b.level} → ${b.level + 1}` : def.name}</b></div>
+              <div class="small muted">{REGIONS[REGION_OF[a.tile]].name} · {GAIN[a.type]}</div>
+              <div class={`small adv-why ${level(a.sector.score)}`}>{a.sector.icon} {a.sector.name}: {Math.round(a.sector.score * 100)}%</div>
+            </div>
+            <button
+              class="btn sm" disabled={free <= 0 || c.money < a.cost}
+              onClick={() => report(applyAdvice(g, me, a), `🔨 ${def.name}: стройка началась — ${REGIONS[REGION_OF[a.tile]].name}`)}
+            >
+              💰 {fmt(a.cost)}
+            </button>
+          </div>
+        );
+      })}
+      <button
+        class="btn block shine" style={{ marginTop: '10px' }} disabled={!canAll}
+        onClick={() => {
+          const n = applyAllAdvice(g, me);
+          report(n ? null : 'Не хватает денег или мест для стройки', n ? `🔨 Начато строек по совету: ${n}` : undefined);
+        }}
+      >
+        🔨 Построить всё по совету
+      </button>
+      {free <= 0 && <div class="small muted" style={{ marginTop: '6px', textAlign: 'center' }}>Все места заняты — дождитесь окончания стройки.</div>}
+    </Card>
   );
 }
 

@@ -24,6 +24,13 @@ export function loadGame(): GameState | null {
     g.quests ??= [];
     g.missiles ??= [];
     g.fallout ??= {};
+    g.un ??= [];
+    // санкции и коалиции прежней версии ООН: без дела в g.un они не кончились бы никогда
+    for (const c of g.countries) c.mods = c.mods.filter((m) => m.label !== 'Санкции ООН');
+    for (const p of Object.values(g.pairs)) if (p.war?.un !== undefined && !g.un.some((cs) => cs.aggressor === p.war!.un)) delete p.war.un;
+    g.mail ??= [];
+    g.mailSeen ??= [];
+    g.nextMailDay ??= g.day + 20;
     for (const c of g.countries) c.moneyScale ??= Math.max(30, c.lastGross);
     initSociety(g, !g.market);
     return g;

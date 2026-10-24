@@ -18,7 +18,7 @@ export function MapControls({ map }: { map: MapView }) {
   );
 }
 
-const TAB_KEYS: Tab[] = ['map', 'policy', 'build', 'diplo', 'army', 'market', 'stats'];
+const TAB_KEYS: Tab[] = ['map', 'policy', 'build', 'army', 'market', 'stats'];
 const PAN: Record<string, string> = {
   KeyW: 'up', ArrowUp: 'up', KeyS: 'down', ArrowDown: 'down', KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right',
 };
@@ -63,7 +63,7 @@ export function useHotkeys(map: MapView) {
           return;
       }
       if (!free) return;
-      const n = /^(Digit|Numpad)([1-7])$/.exec(e.code);
+      const n = /^(Digit|Numpad)([1-6])$/.exec(e.code);
       if (n) {
         const tab = TAB_KEYS[+n[2] - 1];
         setUI({ tab, tile: tab === 'map' ? ui.tile : -1 });
@@ -75,6 +75,7 @@ export function useHotkeys(map: MapView) {
         case 'KeyH': setUI({ tab: 'map' }); map.home(); break;
         case 'KeyJ': setUI({ modal: { kind: 'quests' } }); break;
         case 'KeyN': setUI({ modal: { kind: 'news' } }); break;
+        case 'KeyM': setUI({ modal: { kind: 'mail' } }); break;
         default: return;
       }
       emit();

@@ -6,12 +6,14 @@ import { BUILDINGS, GOVS } from './defs';
 import { computeAll, pairKey, REGION_DELTA, STATS, tradeWith } from './economy';
 import { triggerEvent } from './events';
 import { tickNuclear } from './nuclear';
+import { tickMail } from './mail';
 import { tickMarket } from './market';
 import { triggerDemand } from './people';
 import { checkQuests } from './quests';
 import { tickSociety } from './society';
 import { banner, fx, log, mapDirty, news, pick, sfx, toast } from './state';
 import type { GameState, GovType, Sample } from './types';
+import { tickUN } from './un';
 import { tickWonders } from './wonders';
 import { REGIONS, REGION_OF } from './world';
 
@@ -71,6 +73,7 @@ export function tick(g: GameState) {
 
   tickWonders(g);
   tickNuclear(g);
+  tickUN(g);
   if (g.day % 5 === 0) driftRelations(g);
   for (let i = 0; i < g.countries.length; i++) {
     if (i !== g.player && g.countries[i].alive && (g.day + i) % 4 === 0) aiTurn(g, i);
@@ -80,6 +83,7 @@ export function tick(g: GameState) {
   if (g.day >= g.nextDemandDay && !g.event) triggerDemand(g);
   if (g.day % 5 === 0) checkAchievements(g);
   checkQuests(g);
+  tickMail(g);
 
   g.day++;
   computeAll(g);
