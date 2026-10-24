@@ -22,6 +22,7 @@ export function MarketPanel() {
     <>
       <PanelHero kind="market" />
       <Tabs<MarketTab>
+        compact
         value={ui.marketTab}
         onChange={(v) => setUI({ marketTab: v })}
         options={[

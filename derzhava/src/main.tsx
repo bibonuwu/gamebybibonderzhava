@@ -8,11 +8,13 @@ import './style.css';
 import { render } from 'preact';
 import { initAudio } from './audio';
 import { MapView } from './map/MapView';
+import { initPwa } from './pwa';
 import { App } from './ui/App';
 import { initFx } from './ui/fx';
 import { startLoop } from './ui/store';
 
 async function boot() {
+  initPwa();
   initAudio();
   initFx();
   // шрифты нужны до создания подписей на карте

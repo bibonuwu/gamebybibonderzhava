@@ -74,14 +74,19 @@ export function Seg<T extends string | number>({ options, value, onChange }: { o
   );
 }
 
-export function Tabs<T extends string>({ options, value, onChange }: { options: { v: T; label: string }[]; value: T; onChange: (v: T) => void }) {
+/** compact — у неактивных вкладок только иконка (до первого пробела), название — у выбранной и в подсказке. */
+export function Tabs<T extends string>({ options, value, onChange, compact }: { options: { v: T; label: string }[]; value: T; onChange: (v: T) => void; compact?: boolean }) {
   return (
-    <div class="tabs">
-      {options.map((o) => (
-        <button key={o.v} class={o.v === value ? 'on' : ''} onClick={() => onChange(o.v)}>
-          {o.label}
-        </button>
-      ))}
+    <div class={`tabs ${compact ? 'compact' : ''}`}>
+      {options.map((o) => {
+        const on = o.v === value;
+        const short = compact && !on;
+        return (
+          <button key={o.v} class={`${on ? 'on' : ''} ${short ? 'ic-only' : ''}`} onClick={() => onChange(o.v)} title={compact ? o.label : undefined} aria-label={short ? o.label : undefined}>
+            {short ? o.label.split(' ')[0] : o.label}
+          </button>
+        );
+      })}
     </div>
   );
 }

@@ -9,6 +9,7 @@ import { banners, deals, dismissToast, emit, getGame, setGame, toast, toasts, ty
 import { COUNTRY_DEFS, REGIONS } from '../game/world';
 import type { MapView } from '../map/MapView';
 import { AudioSettings } from './AudioSettings';
+import { InstallApp } from './InstallApp';
 import { MailModal } from './Mail';
 import { Bar, CountUp, KV, More, Rate, relColor } from './common';
 import { AttackDialog } from './panels/ArmyPanel';
@@ -165,12 +166,13 @@ function Menu({ map }: { map: MapView }) {
         <div class="small muted">На слабом телефоне выключите эффекты — игра станет плавнее.</div>
       </div>
       <div class="card"><AudioSettings /></div>
+      <InstallApp />
       <div class="card hotkeys">
         <h3>⌨️ Клавиши</h3>
         <div class="kv small">
           <span><kbd>Пробел</kbd></span><span>пауза</span>
           <span><kbd>+</kbd> <kbd>−</kbd></span><span>скорость</span>
-          <span><kbd>1</kbd>…<kbd>7</kbd></span><span>вкладки</span>
+          <span><kbd>1</kbd>…<kbd>6</kbd></span><span>вкладки</span>
           <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / стрелки</span><span>двигать карту</span>
           <span><kbd>Q</kbd> <kbd>E</kbd> / колёсико</span><span>отдалить / приблизить</span>
           <span><kbd>H</kbd></span><span>к столице</span>

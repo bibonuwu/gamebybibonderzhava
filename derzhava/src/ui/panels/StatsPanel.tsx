@@ -117,6 +117,7 @@ export function StatsPanel() {
       </Card>
       <Card title="🏆 Рейтинг стран" sub={`вы на ${myPlace} месте`}>
         <Tabs
+          compact
           value={rank}
           onChange={setRank}
           options={[

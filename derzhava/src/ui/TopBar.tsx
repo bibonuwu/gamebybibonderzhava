@@ -153,7 +153,7 @@ export function BottomNav() {
     <nav class="nav">
       {TABS.map((t, i) => (
         <button
-          key={t.id} class={ui.tab === t.id ? 'active' : ''} title={`${t.label} (${i + 1})`}
+          key={t.id} class={ui.tab === t.id ? 'active' : ''} title={`${t.label} (${i + 1})`} aria-label={t.label}
           onClick={() => setUI({
             tab: t.id, tile: t.id === 'map' ? ui.tile : -1,
             ...(t.id === 'policy' && dots.policy && ui.tab !== 'policy' ? { policyTab: 'science' as const } : {}),
@@ -162,7 +162,6 @@ export function BottomNav() {
           })}
         >
           <span class="ic">{t.ic}</span>
-          <span class="lb">{t.label}</span>
           {badges[t.id] ? <span class="badge">{badges[t.id]}</span> : dots[t.id] ? <span class="badge dot" /> : null}
         </button>
       ))}

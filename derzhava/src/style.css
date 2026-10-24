@@ -98,43 +98,42 @@ h1, h2, h3 { font-family: var(--head); margin: 0; letter-spacing: 0.04em; }
 .nav {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
   height: calc(var(--nav-h) + var(--safe-b)); padding-bottom: var(--safe-b);
-  display: grid; grid-template-columns: repeat(7, 1fr);
+  display: grid; grid-template-columns: repeat(6, 1fr);
   background: linear-gradient(0deg, rgba(10, 22, 40, 0.98), rgba(13, 29, 52, 0.95));
   border-top: 1px solid var(--gold);
 }
+/* только иконки — название во всплывающей подсказке */
 .nav button {
   border: 0; background: none; color: var(--muted); cursor: pointer;
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
-  font-size: 10.5px; position: relative;
+  display: flex; align-items: center; justify-content: center; position: relative;
 }
-.nav button .ic { font-size: 21px; line-height: 1; filter: grayscale(0.4); }
+.nav button .ic { font-size: 27px; line-height: 1; filter: grayscale(0.4); opacity: 0.8; }
 @media (max-width: 420px) {
-  .nav button { font-size: 9.5px; letter-spacing: -0.01em; }
-  .nav button .ic { font-size: 19px; }
+  .nav button .ic { font-size: 25px; }
 }
 .nav button { overflow: hidden; transition: color 0.2s; }
-.nav button .ic { transition: filter 0.2s, transform 0.2s; }
+.nav button .ic { transition: filter 0.2s, transform 0.2s, opacity 0.2s; }
 .nav button.active {
   color: var(--gold-2);
   background: radial-gradient(ellipse 70% 85% at 50% 0%, rgba(216, 180, 92, 0.24), transparent 75%);
 }
-.nav button.active .ic { filter: drop-shadow(0 0 6px rgba(242, 215, 139, 0.55)); transform: translateY(-1px); animation: nav-pop 0.42s cubic-bezier(0.2, 1.6, 0.4, 1); }
+.nav button.active .ic { opacity: 1; filter: drop-shadow(0 0 7px rgba(242, 215, 139, 0.6)); transform: scale(1.08); animation: nav-pop 0.42s cubic-bezier(0.2, 1.6, 0.4, 1); }
 .nav button.active::before {
-  content: ''; position: absolute; top: 0; left: 22%; right: 22%; height: 3px; border-radius: 0 0 3px 3px;
+  content: ''; position: absolute; top: 0; left: 50%; width: 46px; margin-left: -23px; height: 3px; border-radius: 0 0 3px 3px;
   background: linear-gradient(90deg, var(--gold), var(--gold-2), var(--gold)); box-shadow: 0 0 10px rgba(242, 215, 139, 0.7);
   animation: nav-bar 0.3s ease-out;
 }
 @keyframes nav-pop { 0% { transform: scale(0.7); } 60% { transform: scale(1.18) translateY(-2px); } }
 @keyframes nav-bar { from { transform: scaleX(0); } }
-@media (hover: hover) { .nav button:not(.active):hover { color: var(--text); } .nav button:hover .ic { filter: none; } }
+@media (hover: hover) { .nav button:not(.active):hover { color: var(--text); } .nav button:hover .ic { filter: none; opacity: 1; } }
 .badge {
-  position: absolute; top: 6px; right: calc(50% - 22px); min-width: 17px; height: 17px; padding: 0 4px;
+  position: absolute; top: 9px; right: calc(50% - 26px); min-width: 17px; height: 17px; padding: 0 4px;
   border-radius: 9px; background: var(--bad); color: #fff; font-size: 11px; font-weight: 700; line-height: 17px;
   box-shadow: 0 0 0 2px rgba(10, 22, 40, 0.9); animation: badge-in 0.35s cubic-bezier(0.2, 1.6, 0.4, 1);
 }
 /* зелёная точка: здесь можно что-то сделать прямо сейчас */
 .badge.dot {
-  min-width: 10px; width: 10px; height: 10px; padding: 0; top: 8px; right: calc(50% - 17px);
+  min-width: 10px; width: 10px; height: 10px; padding: 0; top: 13px; right: calc(50% - 21px);
   background: var(--good); animation: dot-pulse 1.8s ease-out infinite;
 }
 @keyframes badge-in { from { transform: scale(0); } }
@@ -272,6 +271,8 @@ h1, h2, h3 { font-family: var(--head); margin: 0; letter-spacing: 0.04em; }
   transition: background 0.2s, color 0.2s, border-color 0.2s, box-shadow 0.2s;
 }
 .tabs button.on { border-color: var(--gold); color: var(--gold-2); background: var(--panel-3); box-shadow: 0 0 12px rgba(216, 180, 92, 0.25); }
+.tabs.compact button.on { flex-grow: 2; }
+.tabs button.ic-only { font-size: 18px; min-width: 44px; padding: 0 6px; }
 
 input[type='range'] { width: 100%; accent-color: var(--gold); height: 28px; }
 
@@ -579,6 +580,7 @@ canvas.chart { width: 100%; height: 170px; display: block; }
   background: var(--panel); color: var(--muted); cursor: pointer; font-weight: 700; transition: background 0.25s, color 0.25s;
 }
 .toggle.on { background: linear-gradient(180deg, #6bd892, #2f8f57); color: #06210f; border-color: #b8f5cf; }
+.toggle:disabled { cursor: default; padding: 0 10px; }
 
 /* ---------- народ и рынок ---------- */
 .stat-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }

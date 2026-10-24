@@ -27,6 +27,7 @@ export function PolicyPanel() {
     <>
       <PanelHero kind="policy" />
       <Tabs
+        compact
         value={sub}
         onChange={setSub}
         options={[
