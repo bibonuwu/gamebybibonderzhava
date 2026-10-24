@@ -95,16 +95,6 @@ export function BuildPanel({ map }: { map: MapView }) {
           </div>
         ))}
       </Card>
-      <Card title="📖 Уровни зданий" fold="build-levels">
-        {BUILDING_TYPES.map((type) => {
-          const def = BUILDINGS[type];
-          return (
-            <div class="small" key={type} style={{ marginBottom: '3px' }}>
-              {def.icon} <b>{def.name}</b>: ур. 2 — {TECH_BY_ID[def.techFor[2]].name}{c.techs.includes(def.techFor[2]) ? ' ✓' : ''}, ур. 3 — {TECH_BY_ID[def.techFor[3]].name}{c.techs.includes(def.techFor[3]) ? ' ✓' : ''}
-            </div>
-          );
-        })}
-      </Card>
     </>
   );
 }

@@ -134,9 +134,6 @@ function Economy() {
         </div>
       </Card>
       <DebtCard />
-      <Card title="💰 Доходы и расходы" sub={<Rate v={s.moneyRate} />} fold="policy-income">
-        <IncomeTable />
-      </Card>
     </>
   );
 }
@@ -313,24 +310,10 @@ const MOD_ICON = { stab: '⚖️', growth: '👥', prod: '💰', brains: '🧠',
 function Science() {
   const g = getGame()!;
   const c = g.countries[g.player];
-  const s = STATS[g.player];
   const avail = new Set(availableTechs(g, g.player).map((t) => t.id));
   const fcost = fundamentalCost(g, g.player);
   return (
     <>
-      <Card title="🧠 Интеллект" sub={`${c.techs.length} из ${TECHS.length} технологий`}>
-        <KV rows={[
-          ['Накоплено', fmt(c.brains)],
-          ['Прирост', <Rate v={s.brainsRate} />],
-        ]} />
-        <More>
-          <KV rows={[
-            ['От населения', fmt(s.brainsBase) + '/сек'],
-            ['От университетов', fmt(s.brainsUni) + '/сек'],
-            ['От учёных', `${fmt(s.brainsSci)}/сек (${fmt(c.scientists)} чел.)`],
-          ]} />
-        </More>
-      </Card>
       {TECH_BRANCHES.map((branch) => {
         const all = TECHS.filter((t) => t.branch === branch);
         const left = all.filter((t) => !c.techs.includes(t.id));

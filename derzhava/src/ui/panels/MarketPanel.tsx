@@ -107,9 +107,6 @@ function FoodTab() {
   const days = foodDays(g, me);
   const buys = [30, 90].map((d) => Math.floor(s.foodCons * d));
   const sells = [0.25, 0.5].map((k) => Math.floor(c.food * k));
-  const world = g.countries.filter((x) => x.alive).map((x) => ({ i: x.idx, r: STATS[x.idx].foodProd / Math.max(1, STATS[x.idx].foodCons) }));
-  const exporters = world.slice().sort((a, b) => b.r - a.r).slice(0, 5);
-  const importers = world.slice().sort((a, b) => a.r - b.r).slice(0, 5);
   return (
     <>
       <PriceCard good="food" />
@@ -147,18 +144,6 @@ function FoodTab() {
           {sells.map((q, k) => (
             <TradeButton key={`s${k}`} sell label={`Продать ${k ? '50' : '25'}% запаса`} cost={sellQuote(m, q)} disabled={q < 1} onClick={() => report(sellFood(g, me, q), `🌾 Продано ${fmt(q)} т`)} />
           ))}
-        </div>
-      </Card>
-      <Card title="🌍 Кто продаёт и покупает еду" fold="market-food-world">
-        <div class="grid2">
-          <div>
-            <div class="small muted" style={{ marginBottom: '4px' }}>Экспортёры</div>
-            {exporters.map((x) => <div class="small row" key={x.i} style={{ gap: '5px' }}><Flag id={x.i} /><span class="grow">{COUNTRY_DEFS[x.i].name}</span><b class="up">{pct(x.r)}</b></div>)}
-          </div>
-          <div>
-            <div class="small muted" style={{ marginBottom: '4px' }}>Импортёры</div>
-            {importers.map((x) => <div class="small row" key={x.i} style={{ gap: '5px' }}><Flag id={x.i} /><span class="grow">{COUNTRY_DEFS[x.i].name}</span><b class="down">{pct(x.r)}</b></div>)}
-          </div>
         </div>
       </Card>
     </>

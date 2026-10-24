@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { ACHIEVEMENTS } from '../../game/achievements';
 import { STATS } from '../../game/economy';
 import { fmt, fmtDate } from '../../game/format';
 import { getGame } from '../../game/state';
@@ -7,7 +6,7 @@ import type { Sample } from '../../game/types';
 import { COUNTRY_DEFS } from '../../game/world';
 import { Card, Flag, More, Seg, Tabs } from '../common';
 import { PanelHero } from '../PanelHero';
-import { setUI, useStore } from '../store';
+import { useStore } from '../store';
 
 type Metric = 'money' | 'brains' | 'pop' | 'mr' | 'br' | 'pr';
 const METRICS: { v: Metric; label: string; color: string }[] = [
@@ -134,27 +133,6 @@ export function StatsPanel() {
         {ranking.slice(0, 5).map(row)}
         {myPlace > 5 && row(g.player, myPlace - 1)}
         <More label="Все страны">{ranking.slice(5).map((i, k) => (i === g.player ? null : row(i, k + 5)))}</More>
-      </Card>
-      <Card title="🏅 Достижения" sub={`${g.achievements.length} / ${ACHIEVEMENTS.length}`} fold="stats-ach">
-        <div class="grid2">
-          {ACHIEVEMENTS.map((a) => {
-            const got = g.achievements.includes(a.id);
-            return (
-              <div key={a.id} class="option-card" style={{ opacity: got ? 1 : 0.45, cursor: 'default', padding: '7px 8px' }}>
-                <span style={{ fontSize: '22px', filter: got ? 'none' : 'grayscale(1)' }}>{a.icon}</span>
-                <span><div class="t small">{a.name}</div><div class="small muted" style={{ fontSize: '11px' }}>{a.desc}</div></span>
-              </div>
-            );
-          })}
-        </div>
-      </Card>
-      <Card title="📜 Журнал" fold="stats-log">
-        <button class="btn ghost sm block" style={{ marginBottom: '8px' }} onClick={() => setUI({ modal: { kind: 'news' } })}>📰 Мировые новости</button>
-        {g.log.filter((l) => !l.world).slice(0, 30).map((l, i) => (
-          <div class="small" key={i} style={{ marginBottom: '4px' }}>
-            <span class="muted">{fmtDate(l.day)}</span> <span class={l.kind === 'bad' ? 'down' : l.kind === 'good' ? 'up' : ''}>{l.text}</span>
-          </div>
-        ))}
       </Card>
     </>
   );
