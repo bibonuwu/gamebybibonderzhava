@@ -1,0 +1,11 @@
+{
+  "name": "Держава",
+  "short_name": "Держава",
+  "description": "Стратегия-песочница: управляйте реальной страной",
+  "start_url": "./",
+  "display": "fullscreen",
+  "orientation": "portrait",
+  "background_color": "#0a1424",
+  "theme_color": "#0a1424",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}
