@@ -1,9 +1,10 @@
 // Производные показатели стран: доходы, наука, рост населения, стабильность, армия, продовольствие, общество.
 import {
-  BASE_MODS, BIRTH_POLICY, BUDGET_COST, BUDGET_INFO, BUILDINGS, BUILDING_TYPES, CORP_YIELD, DIFFICULTY, EDU_SCI, FOOD_PER,
-  GENIUS_FIELDS, GOVS, IMF_RATE, INTEL_COST, INVEST_PER, LEVEL_EFFECT, LODGE_DUES, LODGE_OPEN_STAB, LODGE_TITHE, MIGRATION, MIL_ARMS, RELIGIONS, SCI_OUT,
-  SECTOR_KEYS, TECH_BY_ID, type TechMods,
+  BASE_MODS, BIRTH_POLICY, BUDGET_COST, BUDGET_INFO, BUILDER_SPEED, BUILDINGS, BUILDING_TYPES, CORP_YIELD, DIFFICULTY, EDU_SCI, FOOD_PER,
+  GENIUS_FIELDS, GOVS, IMF_RATE, INTEL_COST, INVEST_PER, LEVEL_EFFECT, LODGE_DUES, LODGE_OPEN_STAB, LODGE_TITHE, MIGRATION, MIL_ARMS, ORDER_SHARE,
+  RELIGIONS, SCI_OUT, SECTOR_KEYS, SG_STAB, TECH_BY_ID, type TechMods,
 } from './defs';
+import { allBuildings } from './state';
 import type { BuildingType, Country, GameState, Sector } from './types';
 import { wonderMods } from './wonders';
 import { COUNTRY_DEFS, REGIONS, REGION_OF } from './world';
@@ -16,6 +17,7 @@ export interface CountryStats {
   coverage: Record<BuildingType, number>;
   constructing: number;
   slots: number;
+  buildSpeed: number; // сколько секунд стройки проходит за секунду (строители)
   mods: TechMods;
   prod: number;
   taxIncome: number;
@@ -84,7 +86,13 @@ export let REGION_FORT = new Float64Array(REGIONS.length);
 export let PORT_TILES: number[][] = [];
 
 export const regionWeight = (pop: number) => 1 + pop / 2e6;
-export const pairKey = (a: number, b: number) => (a < b ? `${a}-${b}` : `${b}-${a}`);
+const PAIR_KEYS: (string | undefined)[] = new Array(64 * 64);
+/** Ключ пары стран «меньший-больший». Строки запоминаем: ключ нужен тысячи раз за день, а склеивать его каждый раз дорого. */
+export const pairKey = (a: number, b: number) => {
+  const lo = a < b ? a : b, hi = a < b ? b : a;
+  if (lo < 0 || hi >= 64) return `${lo}-${hi}`;
+  return (PAIR_KEYS[lo * 64 + hi] ??= `${lo}-${hi}`);
+};
 /** Капитализация «типичной» мировой компании страны. */
 export const companyRef = (c: Country) => Math.max(30, c.moneyScale) * 15;
 /** Учёных на человека в начале партии: образованность и богатство страны. */
@@ -105,24 +113,31 @@ export function sectorMods(u: Record<Sector, number>): Partial<TechMods> {
 
 export const equipFactor = (e: number) => 0.7 + 0.3 * Math.min(1, e) + 0.2 * Math.max(0, Math.min(1, e - 1));
 
+function applyMods(m: TechMods, mods: Partial<TechMods> | undefined) {
+  if (!mods) return;
+  for (const key in mods) {
+    const k = key as keyof TechMods;
+    if (k === 'growth' || k === 'stab' || k === 'slots') m[k] += mods[k]!;
+    else m[k] *= mods[k]!;
+  }
+}
+
 export function techMods(c: Country, extra: Partial<TechMods>[] = []): TechMods {
   const m = { ...BASE_MODS };
-  const all = [...c.techs.map((id) => TECH_BY_ID[id]?.mods), ...extra];
-  for (const mods of all) {
-    if (!mods) continue;
-    for (const [k, v] of Object.entries(mods) as [keyof TechMods, number][]) {
-      if (k === 'growth' || k === 'stab' || k === 'slots') m[k] += v;
-      else m[k] *= v;
-    }
-  }
+  // без промежуточных массивов: считается для каждой страны при каждом пересчёте
+  for (const id of c.techs) applyMods(m, TECH_BY_ID[id]?.mods);
+  for (const mods of extra) applyMods(m, mods);
   const f = Math.pow(1.03, c.fundamental);
   m.prod *= f;
   m.brains *= f;
   return m;
 }
 
-export const modSum = (g: GameState, c: Country, kind: string) =>
-  c.mods.filter((m) => m.kind === kind && m.until > g.day).reduce((s, m) => s + m.value, 0);
+export function modSum(g: GameState, c: Country, kind: string) {
+  let sum = 0;
+  for (const m of c.mods) if (m.kind === kind && m.until > g.day) sum += m.value;
+  return sum;
+}
 
 /** Сколько 💰/сек стране i приносит торговый договор с j. */
 export const tradeWith = (g: GameState, i: number, j: number, mult = STATS[i].tradeMult) =>
@@ -161,29 +176,39 @@ function sanctionPenalty(g: GameState, n: number): number[] {
   return out;
 }
 
+const ZERO_COUNTS = Object.fromEntries(BUILDING_TYPES.map((t) => [t, 0])) as Record<BuildingType, number>;
+const ZERO_SECTORS = Object.fromEntries(SECTOR_KEYS.map((k) => [k, 0])) as Record<Sector, number>;
+const TYPE_INDEX = Object.fromEntries(BUILDING_TYPES.map((t, i) => [t, i])) as Record<BuildingType, number>;
+const UPKEEP = BUILDING_TYPES.map((t) => BUILDINGS[t].upkeep);
+const T_FACTORY = TYPE_INDEX.factory, T_PORT = TYPE_INDEX.port, T_UNIVERSITY = TYPE_INDEX.university;
+const T_FARM = TYPE_INDEX.farm, T_FORTRESS = TYPE_INDEX.fortress;
+/** Вес региона по населению (regionWeight) — на время пересчёта. */
+let REGION_W = new Float64Array(REGIONS.length);
+
 export function computeAll(g: GameState) {
   const n = g.countries.length;
   if (REGION_DELTA.length !== REGIONS.length) {
     REGION_DELTA = new Float64Array(REGIONS.length);
     REGION_FARM = new Float64Array(REGIONS.length);
     REGION_FORT = new Float64Array(REGIONS.length);
+    REGION_W = new Float64Array(REGIONS.length);
   }
-  const emptyCounts = () => Object.fromEntries(BUILDING_TYPES.map((t) => [t, 0])) as Record<BuildingType, number>;
   const stats: CountryStats[] = [];
   for (let i = 0; i < n; i++) {
     stats.push({
-      regions: [], civPop: 0, wSum: 0, counts: emptyCounts(), coverage: emptyCounts(), constructing: 0, slots: 2,
+      regions: [], civPop: 0, wSum: 0, counts: { ...ZERO_COUNTS }, coverage: { ...ZERO_COUNTS }, constructing: 0, slots: 2, buildSpeed: 1,
       mods: BASE_MODS, prod: 0, taxIncome: 0, factoryIncome: 0, portIncome: 0, tradeIncome: 0, budgetCost: 0, birthCost: 0,
       upkeepBuildings: 0, upkeepArmy: 0, moneyRate: 0, brainsBase: 0, brainsUni: 0, brainsRate: 0, growthYear: 0, popRate: 0,
       popCap: 0, stabTarget: 50, stabParts: [], weapons: 1, morale: 1, quality: 1, power: 0, barracksMult: 1, tradePartners: 0, tradeMult: 1,
       deployed: 0, equip: 1, armsProd: 0, gdpIndex: 0, sciTarget: 0, brainsSci: 0, billTarget: 0, investIncome: 0, corpIncome: 0,
-      companies: 0, corpValue: 0, sectorUnits: Object.fromEntries(SECTOR_KEYS.map((k) => [k, 0])) as Record<Sector, number>, geniuses: 0,
+      companies: 0, corpValue: 0, sectorUnits: { ...ZERO_SECTORS }, geniuses: 0,
       foodProd: 0, foodCons: 0, foodBuy: 0, foodSell: 0, foodMoney: 0, hunger: 0, sanctions: 0, sanctionLoss: 0,
       lodgeDues: 0, lodgeTithe: 0, debtInterest: 0, intelCost: 0,
     });
   }
   const sanc = sanctionPenalty(g, n);
   const brothers = new Set(g.lodge?.members ?? []);
+  const order = new Set(g.order?.members ?? []); // братья своей ложи игрока
   REGION_FARM.fill(0);
   REGION_FORT.fill(0);
   PORT_TILES = Array.from({ length: n }, () => []);
@@ -192,22 +217,28 @@ export function computeAll(g: GameState) {
     const s = stats[r.owner];
     s.regions.push(id);
     s.civPop += r.pop;
-    s.wSum += regionWeight(r.pop);
+    REGION_W[id] = regionWeight(r.pop);
+    s.wSum += REGION_W[id];
   });
 
-  // здания
+  // здания: счётчики по типам копим в плоских массивах — обращение к полю по имени типа на тысячах зданий дорогое
   const factoryW: number[] = new Array(n).fill(0);
   const portW: number[] = new Array(n).fill(0);
   const uniW: number[] = new Array(n).fill(0);
   const portLevels: number[] = new Array(n).fill(0);
-  for (const key in g.buildings) {
-    const tile = +key;
-    const b = g.buildings[tile];
+  const T = BUILDING_TYPES.length;
+  const counts = new Int32Array(n * T);
+  const coverage = new Float64Array(n * T);
+  const { tiles, list } = allBuildings(g);
+  for (let k = 0; k < tiles.length; k++) {
+    const tile = tiles[k];
+    const b = list[k];
     const rid = REGION_OF[tile];
     const owner = g.regions[rid].owner;
     if (owner < 0) continue;
     const s = stats[owner];
-    s.counts[b.type]++;
+    const ti = TYPE_INDEX[b.type];
+    counts[owner * T + ti]++;
     if (b.progress > 0 && b.level === 1) {
       s.constructing++;
       continue;
@@ -215,14 +246,20 @@ export function computeAll(g: GameState) {
     if (b.progress > 0) s.constructing++;
     const lvl = b.progress > 0 ? b.level - 1 : b.level;
     const eff = LEVEL_EFFECT[lvl];
-    const w = regionWeight(g.regions[rid].pop);
-    s.coverage[b.type] += eff * w;
-    s.upkeepBuildings += BUILDINGS[b.type].upkeep * lvl * w * g.countries[owner].baseProd;
-    if (b.type === 'factory') factoryW[owner] += eff * w;
-    if (b.type === 'port') { portW[owner] += eff * w; portLevels[owner] += eff; PORT_TILES[owner].push(tile); }
-    if (b.type === 'university') uniW[owner] += eff * w;
-    if (b.type === 'farm') REGION_FARM[rid] += eff;
-    if (b.type === 'fortress') REGION_FORT[rid] = Math.max(REGION_FORT[rid], eff);
+    const w = REGION_W[rid];
+    coverage[owner * T + ti] += eff * w;
+    s.upkeepBuildings += UPKEEP[ti] * lvl * w * g.countries[owner].baseProd;
+    if (ti === T_FACTORY) factoryW[owner] += eff * w;
+    else if (ti === T_PORT) { portW[owner] += eff * w; portLevels[owner] += eff; PORT_TILES[owner].push(tile); }
+    else if (ti === T_UNIVERSITY) uniW[owner] += eff * w;
+    else if (ti === T_FARM) REGION_FARM[rid] += eff;
+    else if (ti === T_FORTRESS) REGION_FORT[rid] = Math.max(REGION_FORT[rid], eff);
+  }
+  for (let i = 0; i < n; i++) {
+    for (let t = 0; t < T; t++) {
+      stats[i].counts[BUILDING_TYPES[t]] = counts[i * T + t];
+      stats[i].coverage[BUILDING_TYPES[t]] = coverage[i * T + t];
+    }
   }
 
   // урожай регионов (фермы поднимают его)
@@ -259,7 +296,9 @@ export function computeAll(g: GameState) {
     for (const t of BUILDING_TYPES) s.coverage[t] = s.wSum > 0 ? s.coverage[t] / s.wSum : 0;
     const mods = techMods(c, [...wmods[i], sectorMods(s.sectorUnits)]);
     s.mods = mods;
-    s.slots = 2 + mods.slots;
+    const crew = c.builders ?? 1;
+    s.slots = 1 + crew + mods.slots;
+    s.buildSpeed = 1 + BUILDER_SPEED * (crew - 1);
     const gov = GOVS[c.gov];
     const rel = RELIGIONS[c.religion];
     const diff = difficultyMult(g, i);
@@ -289,6 +328,8 @@ export function computeAll(g: GameState) {
     if (s.sanctions > 0) parts.push(['Санкции ООН', -s.sanctions * 25]);
     if (mods.stab) parts.push(['Технологии и чудеса', mods.stab]);
     if (i === g.player && g.lodge?.open && brothers.has(i)) parts.push(['Правитель — масон', LODGE_OPEN_STAB[c.religion]]);
+    if (i === g.player && g.order?.official) parts.push(['Официальная ложа', LODGE_OPEN_STAB[c.religion]]);
+    if (g.assembly?.sg === i) parts.push(['Генсек ООН — наш', SG_STAB]);
     const civ = Math.max(1, s.civPop);
     if (c.gov === 'dictatorship') parts.push(['Страх перед армией', Math.min(10, (c.soldiers / civ) * 1000)]);
     if (c.armyType === 'conscript' && c.soldiers / civ > 0.01) parts.push(['Призыв', -5]);
@@ -328,7 +369,7 @@ export function computeAll(g: GameState) {
       s.tradePartners++;
       s.tradeIncome += tradeWith(g, i, j, s.tradeMult);
     }
-    s.lodgeDues = brothers.has(i) ? Math.max(0, s.taxIncome) * LODGE_DUES : 0;
+    s.lodgeDues = brothers.has(i) || order.has(i) ? Math.max(0, s.taxIncome) * LODGE_DUES : 0;
     s.debtInterest = ((c.debt ?? 0) * (c.debtRate ?? 0) + (c.imf?.loan ?? 0) * IMF_RATE) / 365;
     s.intelCost = Math.max(0, s.taxIncome) * INTEL_COST[c.counterIntel ?? 1];
     s.moneyRate = s.taxIncome + s.factoryIncome + s.portIncome + s.tradeIncome + s.corpIncome + s.investIncome + s.foodMoney
@@ -367,6 +408,14 @@ export function computeAll(g: GameState) {
     for (const k of brothers) if (k !== gm && g.countries[k]?.alive) dues += stats[k].lodgeDues;
     stats[gm].lodgeTithe = dues * LODGE_TITHE;
     stats[gm].moneyRate += stats[gm].lodgeTithe;
+  }
+  // своя ложа игрока: мастеру — доля взносов всех братьев
+  if (g.order && g.countries[g.player].alive) {
+    let dues = 0;
+    for (const k of order) if (g.countries[k]?.alive) dues += stats[k].lodgeDues;
+    const share = dues * (g.order.official ? ORDER_SHARE.official : ORDER_SHARE.secret);
+    stats[g.player].lodgeTithe += share;
+    stats[g.player].moneyRate += share;
   }
 
   // прирост по регионам

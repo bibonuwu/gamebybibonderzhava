@@ -1,5 +1,6 @@
 // Управление картой с клавиатуры (ПК).
 import { useEffect } from 'preact/hooks';
+import { resolveEvent } from '../game/events';
 import { emit, getGame } from '../game/state';
 import type { MapView } from '../map/MapView';
 import { prefs, setPrefs, setUI, ui, type Speed, type Tab } from './store';
@@ -47,6 +48,16 @@ export function useHotkeys(map: MapView) {
         case 'Minus': case 'NumpadSubtract':
           setPrefs({ speed: Math.max(1, prefs.speed - 1) as Speed });
           return;
+      }
+      // окно события: цифра — номер варианта ответа
+      const opt = /^(Digit|Numpad)([1-9])$/.exec(e.code);
+      if (g.event && opt) {
+        const i = +opt[2] - 1;
+        if (i < g.event.options.length) {
+          resolveEvent(g, i);
+          emit();
+        }
+        return;
       }
       if (!free) return;
       const n = /^(Digit|Numpad)([1-6])$/.exec(e.code);

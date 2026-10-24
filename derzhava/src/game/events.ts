@@ -1,5 +1,6 @@
 // Случайные события с выбором (только для игрока).
 import { addRel, atWar, enemiesOf, neighborCountries } from './actions';
+import { resolveSGEvent, SG_EVENT } from './assembly';
 import { INVEST_PER } from './defs';
 import { computeAll, STATS } from './economy';
 import { resolveDebtEvent } from './debt';
@@ -7,7 +8,7 @@ import { resolveElectionEvent } from './elections';
 import { resolveLodgeEvent } from './lodge';
 import { resolveDemand } from './people';
 import { adoptGenius, companiesOf, geniusText } from './society';
-import { log, pick, rand, sfx } from './state';
+import { allBuildings, log, pick, rand, removeBuilding, sfx } from './state';
 import type { Country, GameState, TempMod } from './types';
 import { voteUN } from './un';
 import { COUNTRY_DEFS, REGION_OF, REGIONS } from './world';
@@ -22,7 +23,8 @@ interface EventDef {
   id: string;
   title: string;
   icon: string;
-  text: string | ((g: GameState, t: number) => string);
+  /** Несколько строк — каждый раз звучит одна из них. */
+  text: string | string[] | ((g: GameState, t: number) => string);
   /** Выбор страны для события; -1 — подходящей нет, событие пропускается. */
   target?: (g: GameState) => number;
   can?: (g: GameState) => boolean;
@@ -68,19 +70,19 @@ const tycoonHome = (g: GameState) => {
 };
 
 const EVENTS: EventDef[] = [
-  { id: 'drought', title: 'Засуха', icon: '☀️', text: 'Реки мелеют, поля выгорают. Урожай в этом году будет меньше.', options: [
+  { id: 'drought', title: 'Засуха', icon: '☀️', text: ['Реки мелеют, поля выгорают. Урожай в этом году будет меньше.', 'Третий месяц ни капли дождя: земля трескается, коровы прячутся в тень.'], options: [
     { label: 'Спасти урожай: полив и техника', hint: (g) => `−${fmt(income(g) * 50)} 💰, урожай −10% на 120 дн.`, apply: (g) => { pay(g, 50); mod(g, me(g), 'food', -0.1, 120, 'Засуха'); } },
     { label: 'Справятся сами', hint: () => 'урожай −35% на 120 дн., стабильность −6', apply: (g) => { mod(g, me(g), 'food', -0.35, 120, 'Засуха'); mod(g, me(g), 'stab', -6, 120, 'Засуха'); } },
   ] },
-  { id: 'epidemic', title: 'Эпидемия', icon: '🦠', text: 'В крупных городах вспышка опасной инфекции.', options: [
+  { id: 'epidemic', title: 'Эпидемия', icon: '🦠', text: ['В крупных городах вспышка опасной инфекции.', 'Больницы заполняются: врачи бьют тревогу — новая инфекция передаётся очень быстро.'], options: [
     { label: 'Карантин и вакцины', hint: (g) => `−${fmt(income(g) * 45)} 💰, производство −10% на 90 дн.`, apply: (g) => { pay(g, 45); mod(g, me(g), 'prod', -0.1, 90, 'Карантин'); } },
     { label: 'Не вмешиваться', hint: () => '−3% 👥, стабильность −8', apply: (g) => { popLoss(g, 0.03); mod(g, me(g), 'stab', -8, 150, 'Эпидемия'); } },
   ] },
-  { id: 'breakthrough', title: 'Научный прорыв', icon: '💡', text: 'Учёные на пороге важного открытия.', options: [
+  { id: 'breakthrough', title: 'Научный прорыв', icon: '💡', text: ['Учёные на пороге важного открытия.', 'В лаборатории ночью погас свет — а прибор продолжал светиться. Учёные уверены: это прорыв.'], options: [
     { label: 'Профинансировать', hint: (g) => `−${fmt(income(g) * 50)} 💰, +${fmt(brainsRate(g) * 250)} 🧠`, apply: (g) => { pay(g, 50); me(g).brains += brainsRate(g) * 250; } },
     { label: 'Продать патент', hint: (g) => `+${fmt(income(g) * 90)} 💰`, apply: (g) => { me(g).money += income(g) * 90; } },
   ] },
-  { id: 'protests', title: 'Массовые протесты', icon: '📢', text: 'Люди вышли на улицы и требуют перемен.', options: [
+  { id: 'protests', title: 'Массовые протесты', icon: '📢', text: ['Люди вышли на улицы и требуют перемен.', 'Центральные площади заполнены людьми: протест охватил сразу несколько городов.'], options: [
     { label: 'Снизить налоги на 5%', hint: () => 'стабильность +10 на 200 дн.', apply: (g) => { me(g).tax = Math.max(0, me(g).tax - 0.05); mod(g, me(g), 'stab', 10, 200, 'Уступки'); } },
     { label: 'Диалог с лидерами', hint: (g) => `−${fmt(income(g) * 30)} 💰, стабильность +5`, apply: (g) => { pay(g, 30); mod(g, me(g), 'stab', 5, 150, 'Диалог'); } },
     { label: 'Разогнать', hint: (g) => (me(g).gov === 'dictatorship' ? 'стабильность −3' : 'стабильность −12, отношения −5 со всеми'), apply: (g) => {
@@ -92,7 +94,7 @@ const EVENTS: EventDef[] = [
     { label: 'Поддержать традиции', hint: () => 'стабильность +8, 🧠 −10% на 150 дн.', apply: (g) => { mod(g, me(g), 'stab', 8, 150, 'Традиции'); mod(g, me(g), 'brains', -0.1, 150, 'Традиции'); } },
     { label: 'Поддержать реформаторов', hint: () => '🧠 +10%, стабильность −8 на 150 дн.', apply: (g) => { mod(g, me(g), 'brains', 0.1, 150, 'Реформы'); mod(g, me(g), 'stab', -8, 150, 'Реформы'); } },
   ] },
-  { id: 'deposit', title: 'Найдено месторождение', icon: '⛏️', text: 'Геологи нашли крупные запасы нефти и редких металлов.', options: [
+  { id: 'deposit', title: 'Найдено месторождение', icon: '⛏️', text: ['Геологи нашли крупные запасы нефти и редких металлов.', 'Буровая вышка ударила фонтаном нефти, а рядом нашли жилу лития.'], options: [
     { label: 'Государственная компания', hint: (g) => `+${fmt(income(g) * 150)} 💰`, apply: (g) => { me(g).money += income(g) * 150; } },
     { label: 'Пустить иностранцев', hint: (g) => `+${fmt(income(g) * 80)} 💰, +15 к отношениям с тремя странами`, apply: (g) => {
       me(g).money += income(g) * 80;
@@ -100,7 +102,7 @@ const EVENTS: EventDef[] = [
       for (let k = 0; k < 3 && others.length; k++) addRel(g, g.player, pick(g, others).idx, 15);
     } },
   ] },
-  { id: 'flood', title: 'Наводнение', icon: '🌊', text: 'Реки вышли из берегов, затоплены города.', options: [
+  { id: 'flood', title: 'Наводнение', icon: '🌊', text: ['Реки вышли из берегов, затоплены города.', 'После недели ливней по улицам плывут лодки, а не машины.'], options: [
     { label: 'Построить дамбы', hint: (g) => `−${fmt(income(g) * 50)} 💰, стабильность +3`, apply: (g) => { pay(g, 50); mod(g, me(g), 'stab', 3, 200, 'Дамбы'); } },
     { label: 'Минимальная помощь', hint: () => '−1.5% 👥, стабильность −5', apply: (g) => { popLoss(g, 0.015); mod(g, me(g), 'stab', -5, 120, 'Наводнение'); } },
   ] },
@@ -108,7 +110,7 @@ const EVENTS: EventDef[] = [
     { label: 'Гранты учёным', hint: (g) => `−${fmt(income(g) * 70)} 💰`, apply: (g) => pay(g, 70) },
     { label: 'Пусть едут', hint: () => '🧠 −20% на 150 дн.', apply: (g) => mod(g, me(g), 'brains', -0.2, 150, 'Утечка мозгов') },
   ] },
-  { id: 'startups', title: 'Бум стартапов', icon: '📈', text: 'Молодые компании растут как на дрожжах.', options: [
+  { id: 'startups', title: 'Бум стартапов', icon: '📈', text: ['Молодые компании растут как на дрожжах.', 'Гаражный стартап за год стал стоить больше старого завода. Инвесторы ищут следующий.'], options: [
     { label: 'Венчурный фонд', hint: (g) => `−${fmt(income(g) * 40)} 💰, производство +18% на 200 дн.`, apply: (g) => { pay(g, 40); mod(g, me(g), 'prod', 0.18, 200, 'Венчурный фонд'); } },
     { label: 'Не мешать', hint: () => 'производство +8% на 200 дн.', apply: (g) => mod(g, me(g), 'prod', 0.08, 200, 'Стартапы') },
   ] },
@@ -127,7 +129,7 @@ const EVENTS: EventDef[] = [
     } },
     { label: 'Закрыть границу', hint: () => 'стабильность +2', apply: (g) => mod(g, me(g), 'stab', 2, 100, 'Закрытая граница') },
   ] },
-  { id: 'olympics', title: 'Олимпийские игры', icon: '🏅', text: 'Нам предлагают провести Олимпиаду.', options: [
+  { id: 'olympics', title: 'Олимпийские игры', icon: '🏅', text: ['Нам предлагают провести Олимпиаду.', 'Олимпийский комитет приехал с проверкой: наши стадионы им понравились.'], options: [
     { label: 'Провести', hint: (g) => `−${fmt(income(g) * 90)} 💰, стабильность +10, отношения +5 со всеми`, apply: (g) => {
       pay(g, 90); mod(g, me(g), 'stab', 10, 250, 'Олимпиада');
       relAll(g, 5);
@@ -137,12 +139,12 @@ const EVENTS: EventDef[] = [
   { id: 'quake', title: 'Землетрясение', icon: '🌋', text: 'Сильное землетрясение разрушило часть инфраструктуры.', options: [
     { label: 'Восстановить всё', hint: (g) => `−${fmt(income(g) * 70)} 💰`, apply: (g) => pay(g, 70) },
     { label: 'Только самое важное', hint: () => 'одно здание теряет уровень, стабильность −6', apply: (g) => {
-      const mine = Object.keys(g.buildings).map(Number).filter((t) => g.regions[REGION_OF[t]].owner === g.player);
+      const mine = allBuildings(g).tiles.filter((t) => g.regions[REGION_OF[t]].owner === g.player);
       if (mine.length) {
         const t = pick(g, mine);
         const b = g.buildings[t];
         if (b.level > 1 && b.progress === 0) b.level--;
-        else delete g.buildings[t];
+        else removeBuilding(g, t);
       }
       mod(g, me(g), 'stab', -6, 120, 'Землетрясение');
     } },
@@ -150,6 +152,42 @@ const EVENTS: EventDef[] = [
   { id: 'invention', title: 'Гениальный изобретатель', icon: '🧑‍🔬', text: 'Молодой инженер создал революционный прибор.', options: [
     { label: 'Взять в госпроект', hint: (g) => `+${fmt(brainsRate(g) * 200)} 🧠`, apply: (g) => { me(g).brains += brainsRate(g) * 200; } },
     { label: 'Помочь открыть бизнес', hint: (g) => `+${fmt(income(g) * 60)} 💰`, apply: (g) => { me(g).money += income(g) * 60; } },
+  ] },
+
+  { id: 'meteor', title: 'Упал метеорит', icon: '☄️', text: ['Ночью небо вспыхнуло, и в поле упал метеорит размером с автобус.', 'Над страной пролетел огненный шар и рухнул в тайгу. Окна дрожали за сотню километров.'], options: [
+    { label: 'Отдать учёным', hint: (g) => `+${fmt(brainsRate(g) * 160)} 🧠`, apply: (g) => { me(g).brains += brainsRate(g) * 160; } },
+    { label: 'Продать коллекционерам', hint: (g) => `+${fmt(income(g) * 70)} 💰`, apply: (g) => { me(g).money += income(g) * 70; } },
+    { label: 'Открыть музей у кратера', hint: (g) => `−${fmt(income(g) * 15)} 💰, стабильность +4, туристы`, apply: (g) => { pay(g, 15); mod(g, me(g), 'stab', 4, 200, 'Музей метеорита'); mod(g, me(g), 'prod', 0.03, 200, 'Туристы у кратера'); } },
+  ] },
+  { id: 'blackout', title: 'Блэкаут', icon: '🔌', text: ['Авария на подстанции: полстраны осталось без света.', 'Ураган оборвал провода — города погрузились в темноту, лифты встали.'], options: [
+    { label: 'Срочный ремонт сетей', hint: (g) => `−${fmt(income(g) * 40)} 💰, производство −5% на 30 дн.`, apply: (g) => { pay(g, 40); mod(g, me(g), 'prod', -0.05, 30, 'Блэкаут'); } },
+    { label: 'Новая энергосистема', hint: (g) => `−${fmt(income(g) * 90)} 💰, производство +8% на 400 дн.`, apply: (g) => { pay(g, 90); mod(g, me(g), 'prod', 0.08, 400, 'Новая энергосистема'); } },
+    { label: 'Чинить по очереди', hint: () => 'производство −15% на 60 дн., стабильность −5', apply: (g) => { mod(g, me(g), 'prod', -0.15, 60, 'Блэкаут'); mod(g, me(g), 'stab', -5, 90, 'Блэкаут'); } },
+  ] },
+  { id: 'tourism', title: 'Туристический бум', icon: '🧳', can: (g) => me(g).stability >= 45 && enemiesOf(g, g.player).length === 0,
+    text: ['Блогеры назвали нашу страну лучшим местом для отпуска. Туристы едут толпами.', 'Фильм, снятый в наших горах, собрал миллиард. Теперь все хотят сюда.'], options: [
+    { label: 'Строить отели и аэропорты', hint: (g) => `−${fmt(income(g) * 45)} 💰, производство +12% на 300 дн.`, apply: (g) => { pay(g, 45); mod(g, me(g), 'prod', 0.12, 300, 'Туризм'); } },
+    { label: 'Ввести туристический сбор', hint: (g) => `+${fmt(income(g) * 40)} 💰`, apply: (g) => { me(g).money += income(g) * 40; } },
+    { label: 'Беречь природу от толп', hint: () => 'стабильность +3', apply: (g) => mod(g, me(g), 'stab', 3, 150, 'Тихий отдых') },
+  ] },
+  { id: 'strike', title: 'Забастовка шахтёров', icon: '⛏️', text: ['Шахтёры спустились под землю и отказываются подниматься, пока не поднимут зарплаты.', 'Портовые грузчики бросили работу: в гавани стоят сотни кораблей.'], options: [
+    { label: 'Поднять зарплаты', hint: (g) => `−${fmt(income(g) * 35)} 💰, стабильность +4`, apply: (g) => { pay(g, 35); mod(g, me(g), 'stab', 4, 150, 'Уступки бастующим'); } },
+    { label: 'Переговоры', hint: (g) => `−${fmt(income(g) * 12)} 💰, производство −5% на 40 дн.`, apply: (g) => { pay(g, 12); mod(g, me(g), 'prod', -0.05, 40, 'Забастовка'); } },
+    { label: 'Ждать, пока сдадутся', hint: () => 'производство −15% на 60 дн., стабильность −4', apply: (g) => { mod(g, me(g), 'prod', -0.15, 60, 'Забастовка'); mod(g, me(g), 'stab', -4, 120, 'Забастовка'); } },
+  ] },
+  { id: 'locusts', title: 'Нашествие саранчи', icon: '🦗', text: ['Туча саранчи закрыла солнце над южными полями.', 'Фермеры в панике: саранча съедает поле пшеницы за час.'], options: [
+    { label: 'Авиация и химия', hint: (g) => `−${fmt(income(g) * 30)} 💰, урожай −5% на 90 дн.`, apply: (g) => { pay(g, 30); mod(g, me(g), 'food', -0.05, 90, 'Саранча'); } },
+    { label: 'Позвать птиц и учёных', hint: (g) => `−${fmt(income(g) * 10)} 💰, урожай −12% на 90 дн., 🧠 +${fmt(brainsRate(g) * 30)}`, apply: (g) => { pay(g, 10); mod(g, me(g), 'food', -0.12, 90, 'Саранча'); me(g).brains += brainsRate(g) * 30; } },
+    { label: 'Переждать', hint: () => 'урожай −30% на 90 дн.', apply: (g) => mod(g, me(g), 'food', -0.3, 90, 'Саранча') },
+  ] },
+  { id: 'expo', title: 'Всемирная выставка', icon: '🎡', text: ['Нам предлагают принять Всемирную выставку: павильоны всех стран, роботы и летающие такси.', 'Изобретатели всего мира хотят показать свои чудеса у нас на Всемирной выставке.'], options: [
+    { label: 'Принять с размахом', hint: (g) => `−${fmt(income(g) * 70)} 💰, 🧠 +${fmt(brainsRate(g) * 120)}, отношения +5 со всеми`, apply: (g) => { pay(g, 70); me(g).brains += brainsRate(g) * 120; relAll(g, 5); } },
+    { label: 'Скромный павильон', hint: (g) => `−${fmt(income(g) * 20)} 💰, 🧠 +${fmt(brainsRate(g) * 40)}`, apply: (g) => { pay(g, 20); me(g).brains += brainsRate(g) * 40; } },
+    { label: 'Отказаться', hint: () => 'ничего не меняется', apply: () => {} },
+  ] },
+  { id: 'film', title: 'Наш фильм покорил мир', icon: '🎬', text: ['Фильм нашего режиссёра получил главный приз мирового кинофестиваля.', 'Мультфильм про нашу страну стал самым кассовым в мире.'], options: [
+    { label: 'Наградить и снимать ещё', hint: (g) => `−${fmt(income(g) * 15)} 💰, стабильность +5, отношения +3 со всеми`, apply: (g) => { pay(g, 15); mod(g, me(g), 'stab', 5, 200, 'Мировой кинохит'); relAll(g, 3); } },
+    { label: 'Продать права на продолжение', hint: (g) => `+${fmt(income(g) * 45)} 💰`, apply: (g) => { me(g).money += income(g) * 45; } },
   ] },
 
   // ---------- события с другими странами ----------
@@ -189,11 +227,11 @@ const EVENTS: EventDef[] = [
       { label: 'Ответный удар', hint: (g, t) => `+${fmt(brainsRate(g) * 80)} 🧠, отношения с «${name(t)}» −25`, apply: (g, t) => { me(g).brains += brainsRate(g) * 80; addRel(g, g.player, t, -25); } },
       { label: 'Ничего не делать', hint: () => '🧠 −15% на 120 дн.', apply: (g) => mod(g, me(g), 'brains', -0.15, 120, 'Взлом') },
     ] },
-  { id: 'oil', title: 'Нефтяной бум', icon: '🛢️', text: 'Мировые цены на сырьё взлетели.', options: [
+  { id: 'oil', title: 'Нефтяной бум', icon: '🛢️', text: ['Мировые цены на сырьё взлетели.', 'Биржи лихорадит: баррель нефти подорожал за неделю на треть.'], options: [
     { label: 'Продать сейчас', hint: (g) => `+${fmt(income(g) * 100)} 💰`, apply: (g) => { me(g).money += income(g) * 100; } },
     { label: 'Фонд будущего', hint: () => 'производство +10% на 300 дн.', apply: (g) => mod(g, me(g), 'prod', 0.1, 300, 'Фонд будущего') },
   ] },
-  { id: 'harvest', title: 'Рекордный урожай', icon: '🌾', text: 'Фермеры собрали небывалый урожай.', options: [
+  { id: 'harvest', title: 'Рекордный урожай', icon: '🌾', text: ['Фермеры собрали небывалый урожай.', 'Элеваторы переполнены: зерно ссыпают прямо на площадях под брезент.'], options: [
     { label: 'Продать соседям', hint: (g) => `+${fmt(income(g) * 50)} 💰, отношения с соседями +6`, apply: (g) => {
       me(g).money += income(g) * 50;
       for (const n of neighborCountries(g, g.player)) addRel(g, g.player, n, 6);
@@ -253,7 +291,7 @@ const EVENTS: EventDef[] = [
       { label: 'Военные облигации', hint: (g) => `+${fmt(income(g) * 60)} 💰, стабильность +4`, apply: (g) => { me(g).money += income(g) * 60; mod(g, me(g), 'stab', 4, 150, 'Патриотические облигации'); } },
       { label: 'Отказаться', hint: () => 'ничего не меняется', apply: () => {} },
     ] },
-  { id: 'festival', title: 'Национальный праздник', icon: '🎉', text: 'Приближается юбилей государства.', options: [
+  { id: 'festival', title: 'Национальный праздник', icon: '🎉', text: ['Приближается юбилей государства.', 'Скоро круглая дата основания страны — люди ждут праздника.'], options: [
     { label: 'Пышное торжество', hint: (g) => `−${fmt(income(g) * 30)} 💰, стабильность +8 на 120 дн.`, apply: (g) => { pay(g, 30); mod(g, me(g), 'stab', 8, 120, 'Праздник'); } },
     { label: 'Скромно', hint: () => 'стабильность +2', apply: (g) => mod(g, me(g), 'stab', 2, 90, 'Праздник') },
   ] },
@@ -264,16 +302,20 @@ const EVENTS: EventDef[] = [
   ] },
 ];
 
+/** Сколько последних событий не повторять. */
+const RECENT_EVENTS = 12;
+
 export function triggerEvent(g: GameState) {
-  const last = g.counters.lastEvent ?? -1;
-  const ok = EVENTS.map((_, k) => k).filter((k) => k !== last && (!EVENTS[k].can || EVENTS[k].can!(g)));
+  const recent = (g.recentEvents ??= []);
+  const ok = EVENTS.map((_, k) => k).filter((k) => !recent.includes(EVENTS[k].id) && (!EVENTS[k].can || EVENTS[k].can!(g)));
   const idx = ok.length ? ok[Math.floor(rand(g) * ok.length)] : Math.floor(rand(g) * EVENTS.length);
   const ev = EVENTS[idx];
   const t = ev.target ? ev.target(g) : -1;
   g.nextEventDay = g.day + 150 + Math.floor(rand(g) * 150);
   if (ev.target && t < 0) return; // некому — в другой раз
-  g.counters.lastEvent = idx;
-  const text = typeof ev.text === 'function' ? ev.text(g, t) : ev.text;
+  recent.push(ev.id);
+  if (recent.length > RECENT_EVENTS) recent.shift();
+  const text = typeof ev.text === 'function' ? ev.text(g, t) : Array.isArray(ev.text) ? pick(g, ev.text) : ev.text;
   g.event = { id: ev.id, title: ev.title, text, icon: ev.icon, target: t >= 0 ? t : undefined, options: ev.options.map((o) => ({ label: o.label, hint: o.hint(g, t) })) };
   sfx('event');
 }
@@ -281,7 +323,7 @@ export function triggerEvent(g: GameState) {
 export function resolveEvent(g: GameState, option: number) {
   if (!g.event) return;
   if (g.event.kind === 'demand') return resolveDemand(g, option);
-  if (g.event.kind === 'un') return voteUN(g, option);
+  if (g.event.kind === 'un') return g.event.id === SG_EVENT ? resolveSGEvent(g, option) : voteUN(g, option);
   if (g.event.kind === 'lodge') return resolveLodgeEvent(g, option);
   if (g.event.kind === 'election') return resolveElectionEvent(g, option);
   if (g.event.kind === 'debt') return resolveDebtEvent(g, option);

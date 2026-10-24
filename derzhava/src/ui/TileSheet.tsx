@@ -71,7 +71,7 @@ export function TileSheet({ map }: { map: MapView }) {
           <div class="grow">
             <b>{BUILDINGS[b.type].name}</b> · ур. {b.progress > 0 && b.level > 1 ? `${b.level - 1} → ${b.level}` : b.level}
             <div class="small muted">{BUILDINGS[b.type].desc}</div>
-            {b.progress > 0 && <><div class="small">Строится: {Math.ceil(b.progress)} сек</div><Bar value={1 - b.progress / b.total} /></>}
+            {b.progress > 0 && <><div class="small">Строится: {Math.ceil(b.progress / STATS[me].buildSpeed)} сек</div><Bar value={1 - b.progress / b.total} /></>}
           </div>
           {mine && b.progress === 0 && b.level < 3 && (
             <button class="btn sm" disabled={!!upgradeError(g, me, tile) || c.money < buildCost(g, me, b.type, b.level + 1, rid)} onClick={() => report(startUpgrade(g, me, tile), '⬆️ Улучшение началось')}>

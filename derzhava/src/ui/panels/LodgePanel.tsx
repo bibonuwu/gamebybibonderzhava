@@ -1,16 +1,24 @@
-// Тайная ложа: посвящение, степень и влияние, подозрение газет, поручения, тайные услуги, братья и выборы.
+// Ложи: своя (основать, посвятить братьев, воля мастера, официальный статус) и тайная ложа «Всевидящее око»
+// (посвящение, степень и влияние, подозрение газет, поручения, тайные услуги, братья и выборы).
 import { useState } from 'preact/hooks';
+import { atWar, peekPair } from '../../game/actions';
+import { LODGE_OPEN_STAB, PERSONALITIES } from '../../game/defs';
 import { STATS } from '../../game/economy';
-import { fmt, fmtDays } from '../../game/format';
+import { fmt, fmtDate, fmtDays } from '../../game/format';
 import {
   BAN_STAB, banLodge, buyVotesCost, coupChance, declineTask, infRate, joinLodge, knock, knockCost, knockError, leaveLodge,
-  liftBan, LODGE_NAME, OPS, opCost, opError, opWait, rankOf, RANKS, refuseLodge, runOp, taskDef, taskProgress, taskText,
+  liftBan, LODGE_NAME, lodgeKnown, OPS, opCost, opError, opWait, rankOf, RANKS, refuseLodge, runOp, taskDef, taskProgress, taskText,
   visibleMembers, type OpDef,
 } from '../../game/lodge';
-import { getGame } from '../../game/state';
+import {
+  disbandOrder, expel, foundCost, foundError, foundOrder, goOfficial, inOrder, invite, inviteCost, inviteError, joinChance,
+  NAME_MAX, OFFICIAL_MIN, officialCost, officialError, ORDER_EMBLEMS, ORDER_MAX, ORDER_NAMES, ORDER_OPS, orderInfRate, orderMembers,
+  orderOpError, orderOpWait, runOrderOp, type OrderOp,
+} from '../../game/order';
+import { emit, getGame, toast } from '../../game/state';
 import { P5 } from '../../game/un';
 import { COUNTRY_DEFS } from '../../game/world';
-import { Bar, Card, Flag, Rate, RelBar } from '../common';
+import { Bar, Card, Flag, More, Rate, RelBar } from '../common';
 import { report, setUI, useStore } from '../store';
 
 /** Герб ложи: всевидящее око в треугольнике, циркуль и наугольник. */
@@ -54,7 +62,18 @@ export function LodgeCrest({ size = 76 }: { size?: number }) {
 export function LodgePanel() {
   useStore();
   const g = getGame()!;
-  return g.lodge.status === 'member' ? <Member /> : <Outsider />;
+  if (g.lodge.status === 'member') return <Member />;
+  return (
+    <>
+      {g.order ? <OrderView /> : <FoundCard />}
+      {lodgeKnown(g) && (
+        <>
+          <div class="lodge-divider">👁️ Чужая ложа</div>
+          <Outsider />
+        </>
+      )}
+    </>
+  );
 }
 
 // ---------- член ложи ----------
@@ -307,5 +326,276 @@ function Outsider() {
         ))}
       </Card>
     </>
+  );
+}
+
+// ---------- своя ложа ----------
+/** Герб своей ложи: эмблема в золотом треугольнике с циркулем. */
+function OrderCrest({ emblem, size = 76 }: { emblem: string; size?: number }) {
+  return (
+    <div class="order-crest" style={{ width: `${size}px`, height: `${size}px` }} aria-hidden="true">
+      <svg viewBox="0 0 120 120" width={size} height={size}>
+        <defs>
+          <linearGradient id="oc-gold" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#ffe9a8" />
+            <stop offset="1" stop-color="#b8862e" />
+          </linearGradient>
+        </defs>
+        <circle cx="60" cy="62" r="56" fill="none" stroke="#c99a3d" stroke-width="1.5" stroke-dasharray="3 5" class="oc-ring" />
+        <path d="M60 10 L28 108 M60 10 L92 108" stroke="#c99a3d" stroke-width="3" stroke-linecap="round" opacity="0.5" />
+        <path d="M22 96 L60 116 L98 96" stroke="#c99a3d" stroke-width="4" fill="none" stroke-linejoin="round" opacity="0.5" />
+        <path d="M60 22 L102 94 L18 94 Z" fill="#14100a" stroke="url(#oc-gold)" stroke-width="3.5" stroke-linejoin="round" />
+      </svg>
+      <span class="oc-emblem">{emblem}</span>
+    </div>
+  );
+}
+
+function FoundCard() {
+  const g = getGame()!;
+  const [name, setName] = useState(ORDER_NAMES[0]);
+  const [emblem, setEmblem] = useState(ORDER_EMBLEMS[0]);
+  const err = foundError(g, name);
+  const relig = g.countries[g.player].religion;
+  return (
+    <>
+      <div class="lodge-hero">
+        <OrderCrest emblem={emblem} />
+        <div class="lh-main">
+          <div class="lh-name">Своя ложа</div>
+          <div class="small muted">Создайте собственное братство правителей мира. Вы — его основатель и бессменный Великий мастер.</div>
+        </div>
+      </div>
+      <Card title="📐 Основать ложу" sub={`💰 ${fmt(foundCost(g))}`}
+        hint={`Братья не нападают на нас и друг на друга, охотнее подписывают договоры, платят взносы. «${LODGE_NAME}» соперников не любит: иногда строит козни.`}>
+        <div class="small muted">Название</div>
+        <input class="text-in" value={name} maxLength={NAME_MAX} placeholder="Название ложи" onInput={(e) => setName((e.currentTarget as HTMLInputElement).value)} />
+        <div class="order-names">
+          {ORDER_NAMES.map((n) => <button key={n} class={`lo-target ${n === name ? 'on' : ''}`} onClick={() => setName(n)}>{n}</button>)}
+        </div>
+        <div class="small muted" style={{ marginTop: '8px' }}>Герб</div>
+        <div class="order-emblems">
+          {ORDER_EMBLEMS.map((e) => <button key={e} class={`oe ${e === emblem ? 'on' : ''}`} onClick={() => setEmblem(e)} aria-label={`Герб ${e}`}>{e}</button>)}
+        </div>
+        <div class="order-perks small">
+          <div>🤝 Братья не нападают на нас и друг на друга, охотнее подписывают договоры</div>
+          <div>💰 Половина их взносов (1% налогов) — в нашу казну</div>
+          <div>🗝️ Воля мастера за 🔺 влияние: собрание, касса, клятва, бойкот, «Братья, к оружию!»</div>
+          <div>📜 Официальная регистрация — статус наблюдателя ООН: братья голосуют вместе с нами (стабильность {LODGE_OPEN_STAB[relig] || '0'})</div>
+        </div>
+        <button class="btn block shine" disabled={!!err} title={err ?? undefined} onClick={() => report(foundOrder(g, name, emblem))}>
+          {emblem} Основать ложу «{name.trim() || '…'}» · 💰 {fmt(foundCost(g))}
+        </button>
+        {err && <div class="small muted" style={{ marginTop: '4px' }}>{err}</div>}
+      </Card>
+    </>
+  );
+}
+
+function OrderView() {
+  const g = getGame()!;
+  const O = g.order!;
+  const me = g.player;
+  const members = orderMembers(g).sort((a, b) => g.rel[me][b] - g.rel[me][a]);
+  return (
+    <>
+      <div class="lodge-hero">
+        <OrderCrest emblem={O.emblem} />
+        <div class="lh-main">
+          <div class="lh-name">Ложа «{O.name}»</div>
+          <div class="lh-rank">
+            <span class="lh-pill">👑 Великий мастер</span>
+            {O.official ? <span class="chip lodge">📜 наблюдатель ООН</span> : <span class="small muted">тайная</span>}
+          </div>
+          <div class="lh-inf">
+            <b class="num">🔺 {fmt(O.inf)}</b>
+            <span class="small muted"> влияния · +{orderInfRate(g).toFixed(2)}/день</span>
+          </div>
+        </div>
+      </div>
+      <Card title="💰 Казна ложи" sub={`братьев ${members.length} из ${ORDER_MAX}`}
+        hint="Каждый брат платит взносы — 1% своих налогов. Мастеру идёт половина, а официальной ложе — три четверти. 🔺 влияние копится каждый день: чем больше братьев, тем быстрее.">
+        <div class="row between small"><span class="muted">👁️ Десятина братьев</span><Rate v={STATS[me].lodgeTithe} /></div>
+        <div class="row between small"><span class="muted">📅 Основана</span><span>{fmtDate(O.founded)}</span></div>
+        {members.length === 0 && <div class="small muted" style={{ marginTop: '6px' }}>Пока в ложе только мы. Позовите правителей — ниже, в «Посвящении».</div>}
+      </Card>
+      <OrderOpsCard />
+      {members.length > 0 && <OrderBrothers list={members} />}
+      <InviteCard />
+      <OfficialCard />
+      <button
+        class="btn ghost block"
+        onClick={() => setUI({ modal: { kind: 'confirm', danger: true, title: `🚪 Распустить ложу «${O.name}»?`, okText: 'Распустить',
+          text: 'Всё 🔺 влияние сгорит, братья обидятся (отношения −10), взносы прекратятся. Основать новую ложу можно, но братьев придётся собирать заново.',
+          ok: () => disbandOrder(g) } })}
+      >
+        🚪 Распустить ложу
+      </button>
+    </>
+  );
+}
+
+function OrderOpsCard() {
+  const g = getGame()!;
+  const [open, setOpen] = useState<string | null>(null);
+  return (
+    <Card title="🗝️ Воля мастера" sub={`🔺 ${fmt(g.order!.inf)}`}
+      hint="Действия оплачиваются 🔺 влиянием ложи. Для некоторых нужно несколько братьев.">
+      {ORDER_OPS.map((op) => (
+        <OrderOpRow key={op.id} op={op} open={open === op.id} onToggle={() => setOpen(open === op.id ? null : op.id)} />
+      ))}
+    </Card>
+  );
+}
+
+function OrderOpRow({ op, open, onToggle }: { op: OrderOp; open: boolean; onToggle: () => void }) {
+  const g = getGame()!;
+  const err = orderOpError(g, op.id);
+  const wait = orderOpWait(g, op);
+  const go = (t = -1) => {
+    const run = () => report(runOrderOp(g, op.id, t));
+    if (op.id === 'arms') {
+      setUI({ modal: { kind: 'confirm', danger: true, title: `⚔️ Братья, к оружию: ${COUNTRY_DEFS[t].name}?`, okText: 'Призвать братьев',
+        text: 'Братья объявят войну нашему врагу. Те, кто дружит с ним, откажутся. Если враг не агрессор, ООН сочтёт нападение братьев агрессией: санкции и коалиция против них.',
+        ok: run } });
+    } else run();
+  };
+  const meta = [op.cost ? `🔺${op.cost}` : '', op.money ? `💰${fmt(op.money(g))}` : '', op.min > 1 ? `братьев от ${op.min}` : ''].filter(Boolean).join(' · ');
+  return (
+    <div class="lodge-op">
+      <div class="row">
+        <span class="big-ic">{op.icon}</span>
+        <div class="grow">
+          <b>{op.name}</b>
+          <div class="small muted">{op.desc}</div>
+          <div class="small lo-meta">{meta}{wait > 0 ? ` · ⏳ ${wait} дн.` : ''}</div>
+        </div>
+        <button class="btn sm" disabled={!!err} title={err ?? undefined} onClick={() => (op.choices ? onToggle() : go())}>
+          {op.choices ? (open ? 'Скрыть' : 'Цель ▾') : 'Сделать'}
+        </button>
+      </div>
+      {open && !err && op.choices && (
+        <div class="lo-targets">
+          {op.choices(g).map((c) => (
+            <button key={c.v} class="lo-target" onClick={() => go(c.v)}>
+              {c.flag !== undefined && <Flag id={c.flag} />}
+              <span>{c.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function OrderBrothers({ list }: { list: number[] }) {
+  const g = getGame()!;
+  const me = g.player;
+  const O = g.order!;
+  return (
+    <Card title="🤝 Братья" sub={`${list.length}`}
+      hint="Братья дружат между собой и с нами, не нападают на нас и друг на друга. Кто поднимет меч на брата — изгнан. Кто разругается с мастером (отношения ниже −25) — может уйти сам.">
+      {list.map((k) => {
+        const p = peekPair(g, me, k);
+        return (
+          <div class="list-item" key={k}>
+            <Flag id={k} />
+            <div class="grow tap" onClick={() => setUI({ modal: { kind: 'country', id: k } })}>
+              <div class="row wrap" style={{ gap: '6px' }}>
+                <b>{COUNTRY_DEFS[k].name}</b>
+                {P5.includes(k) && <span class="chip" title="Постоянный член Совбеза ООН">🌐 Совбез</span>}
+                {p.alliance ? <span class="chip ally">🛡️ союз</span> : p.pact && <span class="chip">📜 пакт</span>}
+                {p.trade && <span class="chip">🤝</span>}
+              </div>
+              <div class="small muted">взносы: 💰 {fmt(STATS[k].lodgeDues)}/сек</div>
+            </div>
+            <RelBar v={g.rel[me][k]} />
+            <button class="btn sm ghost" title="Изгнать из ложи" aria-label="Изгнать из ложи"
+              onClick={() => setUI({ modal: { kind: 'confirm', danger: true, title: `Изгнать: ${COUNTRY_DEFS[k].name}?`, okText: 'Изгнать',
+                text: `Страна покинет ложу «${O.name}», отношения с ней −20.`, ok: () => expel(g, k) } })}>✕</button>
+          </div>
+        );
+      })}
+    </Card>
+  );
+}
+
+function InviteCard() {
+  const g = getGame()!;
+  const me = g.player;
+  const O = g.order!;
+  const eye = new Set(visibleMembers(g));
+  const cands = g.countries
+    .filter((c) => c.alive && c.idx !== me && !inOrder(g, c.idx))
+    .map((c) => c.idx)
+    .sort((a, b) => joinChance(g, b) - joinChance(g, a));
+  const call = (k: number) => {
+    const err = invite(g, k);
+    if (err) return report(err);
+    if (inOrder(g, k)) toast(`${O.emblem} ${COUNTRY_DEFS[k].name} — наш брат!`, 'good');
+    else toast(`🚪 ${COUNTRY_DEFS[k].name} отказалась от посвящения`, 'bad');
+    emit();
+  };
+  const row = (k: number) => {
+    const err = inviteError(g, k);
+    const ch = joinChance(g, k);
+    const per = PERSONALITIES[g.countries[k].personality];
+    return (
+      <div class="list-item" key={k}>
+        <Flag id={k} />
+        <div class="grow tap" onClick={() => setUI({ modal: { kind: 'country', id: k } })}>
+          <div class="row wrap" style={{ gap: '6px' }}>
+            <b>{COUNTRY_DEFS[k].name}</b>
+            <span title={per.name}>{per.icon}</span>
+            {eye.has(k) && <span class="chip lodge" title={`Брат ложи «${LODGE_NAME}» — переманить труднее, та ложа обидится`}>👁️ око</span>}
+            {atWar(g, me, k) && <span class="chip war">⚔️ война</span>}
+          </div>
+          <div class={`small ${ch >= 0.5 ? 'up' : ch < 0.15 ? 'down' : 'muted'}`}>
+            {ch > 0 ? `шанс согласия ${Math.round(ch * 100)}%` : 'не вступит'}{err && err !== 'Не хватает денег' && ch > 0 ? ` · ${err}` : ''}
+          </div>
+        </div>
+        <button class="btn sm" disabled={!!err} title={err ?? undefined} onClick={() => call(k)}>Позвать</button>
+      </div>
+    );
+  };
+  const full = orderMembers(g).length >= ORDER_MAX;
+  return (
+    <Card title="🕯️ Посвящение" sub={`💰 ${fmt(inviteCost(g))}`}
+      hint="Тайная встреча стоит денег, а согласится ли правитель — решает случай. Шанс выше при хороших отношениях, у торговцев и учёных, с каждым новым братом и у официальной ложи. Фанатики не вступают никогда. Отказавший обижается (−3) и полгода о посвящении не слышит.">
+      {full ? <div class="small muted">В ложе уже {ORDER_MAX} братьев — больше не вместить.</div> : (
+        <>
+          {cands.slice(0, 6).map(row)}
+          {cands.length > 6 && <More label={`Ещё ${cands.length - 6}`}>{cands.slice(6).map(row)}</More>}
+        </>
+      )}
+    </Card>
+  );
+}
+
+function OfficialCard() {
+  const g = getGame()!;
+  const O = g.order!;
+  const err = officialError(g);
+  const stab = LODGE_OPEN_STAB[g.countries[g.player].religion];
+  return (
+    <Card title="📜 Официальный статус" sub={O.official ? 'наблюдатель ООН' : 'тайная'}
+      hint="Официальная ложа — открытая организация со штаб-квартирой и статусом наблюдателя ООН.">
+      {O.official ? (
+        <div class="small">
+          Ложа зарегистрирована {fmtDate(O.official)}. Братья голосуют в Генассамблее ООН вместе с нами, мастеру идёт 75% взносов, 🔺 копится в полтора раза быстрее.
+          {stab ? <span class="down"> Верующие недовольны: стабильность {stab}.</span> : null}
+        </div>
+      ) : (
+        <>
+          <div class="small muted" style={{ marginBottom: '8px' }}>
+            Выйти из тени: регистрация, штаб-квартира и статус наблюдателя ООН. Братья будут голосовать в Генассамблее вместе с нами, мастеру — 75% взносов,
+            🔺 в полтора раза быстрее, правители охотнее вступают. Но верующие недовольны (стабильность {stab || '0'} навсегда), фанатики обидятся (−15).
+            Нужно хотя бы {OFFICIAL_MIN} брата.
+          </div>
+          <button class="btn block" disabled={!!err} title={err ?? undefined} onClick={() => report(goOfficial(g))}>📜 Зарегистрировать ложу · 💰 {fmt(officialCost(g))}</button>
+          {err && <div class="small muted" style={{ marginTop: '4px' }}>{err}</div>}
+        </>
+      )}
+    </Card>
   );
 }

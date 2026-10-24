@@ -10,7 +10,8 @@ import { GOVS, LODGE_OPEN_STAB } from './defs';
 import { computeAll, STATS } from './economy';
 import { fmt } from './format';
 import { shockMarket } from './market';
-import { banner, log, news, pick, rand, sfx } from './state';
+import { dropBrother, inOrder } from './order';
+import { allBuildings, banner, log, news, pick, rand, sfx } from './state';
 import type { BuildingType, GameState, GovType, LodgeState, LodgeTask, LogEntry, Personality, TempMod } from './types';
 import { isAggressor, P5, sanctions } from './un';
 import { COUNTRY_DEFS, REGION_OF } from './world';
@@ -29,7 +30,7 @@ export const RANKS = [
 ];
 
 /** Кого ложа зовёт охотнее: фанатики не вступают никогда. */
-const JOIN_WISH: Record<Personality, number> = { trader: 3, scientist: 2.5, cautious: 1.5, aggressor: 1, fanatic: 0 };
+export const JOIN_WISH: Record<Personality, number> = { trader: 3, scientist: 2.5, cautious: 1.5, aggressor: 1, fanatic: 0 };
 /** Как быстро забывается подозрение: свободная пресса помнит дольше. */
 const SUSP_DECAY: Record<GovType, number> = { democracy: 0.04, republic: 0.05, monarchy: 0.06, dictatorship: 0.09 };
 /** Насколько легко газетам докопаться до правды. */
@@ -167,6 +168,7 @@ export function joinLodge(g: GameState): string | null {
   if (L.status === 'member') return 'Вы уже в ложе';
   if (L.status === 'expelled') return 'Ложа не прощает тех, кто поднял меч на брата';
   if (L.status === 'banned') return 'Сначала снимите запрет на ложу';
+  if (g.order) return `Вы — мастер своей ложи «${g.order.name}»: братья не терпят двойной верности`;
   L.status = 'member';
   L.joined = g.day;
   L.merit = 0;
@@ -226,6 +228,7 @@ export function knockError(g: GameState): string | null {
   const L = g.lodge;
   if (L.status === 'expelled') return 'Ложа не прощает тех, кто поднял меч на брата';
   if (L.status !== 'refused') return 'Недоступно';
+  if (g.order) return `Сначала распустите свою ложу «${g.order.name}»`;
   const b = botBrothers(g);
   if (b.length && b.reduce((s, k) => s + g.rel[g.player][k], 0) / b.length < -10) return 'Братья нам не доверяют — нужны отношения получше';
   if (g.countries[g.player].money < knockCost(g)) return 'Не хватает денег';
@@ -310,10 +313,11 @@ interface TaskDef {
 
 function built(g: GameState, type?: BuildingType) {
   let n = 0;
-  for (const key in g.buildings) {
-    const b = g.buildings[+key];
+  const { tiles, list } = allBuildings(g);
+  for (let k = 0; k < tiles.length; k++) {
+    const b = list[k];
     if ((b.progress > 0 && b.level === 1) || (type && b.type !== type)) continue;
-    if (g.regions[REGION_OF[+key]].owner === g.player) n++;
+    if (g.regions[REGION_OF[tiles[k]]].owner === g.player) n++;
   }
   return n;
 }
@@ -654,6 +658,11 @@ function overthrow(g: GameState, i: number, gov: GovType) {
 function joinBot(g: GameState, k: number, inf: number) {
   const L = g.lodge;
   if (L.members.includes(k)) return;
+  // новая власть уходит из нашей ложи в «Всевидящее око»
+  if (inOrder(g, k)) {
+    dropBrother(g, k);
+    log(g, `👁️ После переворота ${cname(g, k)} вышла из ложи «${g.order!.name}» — новая власть служит «${LODGE_NAME}»`, 'bad');
+  }
   L.members.push(k);
   L.inf[k] = Math.max(L.inf[k] ?? 0, inf);
 }
@@ -802,6 +811,8 @@ function intrigue(g: GameState) {
   const me = g.player;
   L.nextPlot = g.day + (L.status === 'banned' ? 110 + Math.floor(rand(g) * 90) : 150 + Math.floor(rand(g) * 110));
   if (L.status === 'banned' && rand(g) < 0.7) return plotAgainstPlayer(g);
+  // соперницу-ложу игрока «Всевидящее око» тоже не жалует
+  if (g.order && rand(g) < 0.25) return plotAgainstPlayer(g);
   const bots = botBrothers(g);
   if (!bots.length) return;
   const actor = L.master >= 0 && L.master !== me && g.countries[L.master].alive ? L.master : pick(g, bots);
@@ -814,7 +825,8 @@ function intrigue(g: GameState) {
 /** Ложа посвящает нового брата — того, с кем у мастера лучшие отношения. */
 function recruit(g: GameState, actor: number) {
   if (botBrothers(g).length >= MAX_MEMBERS) return;
-  const cands = g.countries.filter((c) => c.alive && c.idx !== g.player && !isMember(g, c.idx) && JOIN_WISH[c.personality] > 0 && g.rel[actor][c.idx] > 10);
+  const cands = g.countries.filter((c) => c.alive && c.idx !== g.player && !isMember(g, c.idx) && !inOrder(g, c.idx)
+    && JOIN_WISH[c.personality] > 0 && g.rel[actor][c.idx] > 10);
   if (!cands.length) return;
   const k = cands.reduce((a, c) => (g.rel[actor][c.idx] > g.rel[actor][a.idx] ? c : a)).idx;
   joinBot(g, k, 10);

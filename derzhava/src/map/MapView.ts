@@ -73,8 +73,8 @@ export class MapView {
   private progressG = new Graphics();
   private cloudLayer = new Container();
   /** Рыбы, киты, корабли и чайки: слой под поверхностью воды и над ней. */
-  private seaUnder = new Container();
-  private seaOver = new Container();
+  private seaUnder = new Container({ isRenderGroup: true });
+  private seaOver = new Container({ isRenderGroup: true });
   private sea: SeaLife | null = null;
   /** Вода и суша на шейдере (WebGL 2); без него — плоские гексы. */
   private surface: Surface | null = null;
@@ -99,10 +99,12 @@ export class MapView {
   /** Вблизи на чужой земле вместо зданий и городов — название страны-владельца. */
   private foreignLabels = new Container();
   private foreignText = new Map<number, Sprite>(); // регион → подпись страны
-  private buildLayer = new Container();
-  private battleLayer = new Container();
-  private wonderLayer = new Container();
-  private fxLayer = new Container();
+  // Слои, которые меняются часто, — в своих группах отрисовки (isRenderGroup): когда в слое что-то появилось,
+  // исчезло или перерисовалось, Pixi пересобирает только его, а не всю карту с тысячами гор, лесов и подписей.
+  private buildLayer = new Container({ isRenderGroup: true });
+  private battleLayer = new Container({ isRenderGroup: true });
+  private wonderLayer = new Container({ isRenderGroup: true });
+  private fxLayer = new Container({ isRenderGroup: true });
   private wonderSprites = new Map<string, Sprite>();
   /** Живые эффекты: всплывающие значки, вспышки регионов, взрывы над боями, ракеты и ядерные грибы. */
   private effects: { obj: Container; t: number; life: number; kind: 'float' | 'flash' | 'boom' | 'anim'; y0: number; upd?: (p: number) => void; keep?: boolean }[] = [];
@@ -146,10 +148,12 @@ export class MapView {
     const sf = this.surface;
     // горы, леса и домики городов — объёмными картинками поверх шейдерной земли
     const decor = sf ? [new Decor({ renderer: this.app.renderer, center: tileCenter }).layer] : [];
+    // радар, кольца стройки и подсветка под курсором перерисовываются каждый кадр — каждому своя группа отрисовки
+    const own = (g: Graphics) => new Container({ isRenderGroup: true, children: [g] });
     this.world.addChild(
       ocean, ...(sf ? [sf.water, this.seaUnder, sf.land] : [this.waterG, this.seaUnder, this.waveA, this.waveB, this.coastG]),
       this.terrainG, this.ownerG, this.previewG, this.falloutG, ...decor,
-      this.fxLayer, this.glowG, this.borderG, this.selG, this.hoverG, this.selRing, this.pingG, this.cityG, this.buildLayer, this.progressG,
+      this.fxLayer, this.glowG, this.borderG, this.selG, own(this.hoverG), this.selRing, own(this.pingG), this.cityG, this.buildLayer, own(this.progressG),
       this.wonderLayer, this.battleLayer, this.seaOver, this.cloudLayer, this.cityLabels, this.foreignLabels, this.countryLabels,
     );
     this.screenFlash.alpha = 0;

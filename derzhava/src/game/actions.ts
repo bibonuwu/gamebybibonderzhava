@@ -1,12 +1,13 @@
 // Действия стран: стройка, наука, армия, расширение, дипломатия, война.
 import {
-  BATTLE_DAYS, BUILDINGS, COST_GROWTH, LEVEL_COST, TECHS, TECH_BY_ID, TIER_COST, WAR_GRACE_DAYS,
+  BATTLE_DAYS, BUILDER_COST, BUILDER_NAMES, BUILDERS_MAX, BUILDINGS, COST_GROWTH, LEVEL_COST, TECHS, TECH_BY_ID, TIER_COST, WAR_GRACE_DAYS,
 } from './defs';
 import { attackPerSoldier, computeAll, pairKey, PORT_TILES, regionDefense, regionWeight, STATS } from './economy';
-import { banner, celebrate, fx, log, mapDirty, news, rand, sfx } from './state';
+import { allBuildings, banner, celebrate, fx, log, mapDirty, news, putBuilding, rand, removeBuilding, sfx } from './state';
 import type { BuildingType, GameState, PairState } from './types';
 import { coalitionBuildBlock, coalitionWarBlock } from './elections';
 import { brothers, onBrotherWar, onLodgeDestroyed } from './lodge';
+import { onOrderDestroyed, onOrderWar, orderBrothers } from './order';
 import { endWar, fearsUN, isAggressor, joinCoalition, liberatedOwner, onConquest, onDestroyed, openCase, sanctions, warJustice } from './un';
 import {
   COLS, COUNTRY_DEFS, NEIGH, REGIONS, REGION_OF, adjacentWaters, hexDist, isCoastalTile, isWater, terrainOf,
@@ -104,7 +105,7 @@ export function startBuild(g: GameState, ci: number, tile: number, type: Buildin
   if (c.money < cost) return 'Не хватает денег';
   c.money -= cost;
   const t = buildTime(type, 1);
-  g.buildings[tile] = { type, level: 1, progress: t, total: t };
+  putBuilding(g, tile, { type, level: 1, progress: t, total: t });
   mapDirty.buildings = true;
   if (ci === g.player) sfx('build');
   computeAll(g);
@@ -140,9 +141,36 @@ export function startUpgrade(g: GameState, ci: number, tile: number): string | n
   return null;
 }
 
+// ---------- строители ----------
+export const builderLevel = (g: GameState, ci: number) => g.countries[ci].builders ?? 1;
+/** Цена следующего уровня строителей (0 — уже максимум). */
+export function builderCost(g: GameState, ci: number): number {
+  const next = builderLevel(g, ci) + 1;
+  return next > BUILDERS_MAX ? 0 : BUILDER_COST[next] * g.countries[ci].moneyScale;
+}
+export function builderError(g: GameState, ci: number): string | null {
+  if (builderLevel(g, ci) >= BUILDERS_MAX) return 'Строители уже лучшие в мире';
+  if (g.countries[ci].money < builderCost(g, ci)) return 'Не хватает денег';
+  return null;
+}
+/** Нанять строителей следующего уровня: +1 место для стройки, стройка быстрее. */
+export function upgradeBuilders(g: GameState, ci: number): string | null {
+  const err = builderError(g, ci);
+  if (err) return err;
+  const c = g.countries[ci];
+  c.money -= builderCost(g, ci);
+  c.builders = builderLevel(g, ci) + 1;
+  if (ci === g.player) {
+    sfx('build');
+    log(g, `👷 Строители: ${BUILDER_NAMES[c.builders]} (ур. ${c.builders})`, 'good');
+  }
+  computeAll(g);
+  return null;
+}
+
 export function demolish(g: GameState, ci: number, tile: number) {
   if (g.regions[REGION_OF[tile]].owner !== ci) return;
-  delete g.buildings[tile];
+  removeBuilding(g, tile);
   mapDirty.buildings = true;
   computeAll(g);
 }
@@ -150,17 +178,12 @@ export function demolish(g: GameState, ci: number, tile: number) {
 /** Лучшая клетка для здания: регион побольше и где таких зданий меньше. */
 export function bestTileFor(g: GameState, ci: number, type: BuildingType): number {
   let best = -1, bestScore = -Infinity;
-  const perRegion = new Map<number, number>();
-  for (const key in g.buildings) {
-    const b = g.buildings[+key];
-    if (b.type === type) {
-      const rid = REGION_OF[+key];
-      perRegion.set(rid, (perRegion.get(rid) ?? 0) + 1);
-    }
-  }
+  const perRegion = new Int32Array(REGIONS.length);
+  const { tiles, list } = allBuildings(g);
+  for (let k = 0; k < tiles.length; k++) if (list[k].type === type) perRegion[REGION_OF[tiles[k]]]++;
   for (const rid of STATS[ci].regions) {
     const pop = g.regions[rid].pop;
-    const score0 = Math.log10(pop + 10) - 0.9 * (perRegion.get(rid) ?? 0);
+    const score0 = Math.log10(pop + 10) - 0.9 * perRegion[rid];
     for (const t of REGIONS[rid].tiles) {
       if (placeError(g, ci, t, type)) continue;
       const score = score0 - hexDist(t, REGIONS[rid].center) * 0.01 + (type === 'fortress' && isBorderTile(g, t) ? 0.5 : 0);
@@ -359,6 +382,7 @@ function destroyCountry(g: GameState, ci: number, by: number) {
   if (c.project) c.project = undefined;
   onDestroyed(g, ci);
   onLodgeDestroyed(g, ci);
+  onOrderDestroyed(g, ci);
   if (ci === g.player) {
     g.gameOver = true;
     sfx('defeat');
@@ -434,6 +458,7 @@ export function declareWar(g: GameState, a: number, b: number, chain = true): st
   if (vsAggressor) joinCoalition(g, a, b);
   else if (!justice.just) openCase(g, a, b, treachery);
   if (brothers(g, a, b)) onBrotherWar(g, a, b);
+  if (orderBrothers(g, a, b)) onOrderWar(g, a, b);
   computeAll(g);
   return null;
 }
@@ -613,7 +638,7 @@ export function willAccept(g: GameState, a: number, b: number, kind: DiploKind):
   if (per === 'aggressor') need += kind === 'trade' ? 10 : 25;
   if (per === 'fanatic' && g.countries[a].religion !== g.countries[b].religion) need += 15;
   if (kind !== 'trade' && sharedFoe(g, a, b) >= 0) need -= 25;
-  if (brothers(g, a, b)) need -= 15; // братья по ложе договариваются легче
+  if (brothers(g, a, b) || orderBrothers(g, a, b)) need -= 15; // братья по ложе договариваются легче
   if (kind === 'trade' && STATS[b].tradePartners >= maxTrade(g, b)) return false;
   if (sanctions(g, b, a)) return false; // кто ввёл санкции, с агрессором договоров не заключает
   return g.rel[a][b] >= need;

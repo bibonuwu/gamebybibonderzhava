@@ -166,3 +166,35 @@ export function CountUp({ from, to, format = fmt, ms = 1400, delay = 350 }: { fr
   }, [from, to]);
   return <span ref={ref}>{format(from)}</span>;
 }
+
+// снижение этих показателей — к добру
+const GOOD_DROP = /усталость|налог|волнени|напряжени/i;
+/** Как читается кусок подсказки: выгода, потеря, цена или просто пояснение. */
+function effectTone(part: string): 'good' | 'bad' | 'cost' | 'info' {
+  if (/^−[^,]*💰/.test(part)) return 'cost';
+  const minus = /[−-]\s?\d/.test(part);
+  const plus = /\+\s?\d/.test(part);
+  if (minus && GOOD_DROP.test(part)) return 'good';
+  if (minus) return 'bad';
+  if (plus) return 'good';
+  if (/риск|обид|осужд|злятся|мстить/i.test(part)) return 'bad';
+  return 'info';
+}
+/** Подсказка варианта ответа — цветными метками: что получим, что потеряем, сколько стоит. */
+export function Effects({ hint }: { hint: string }) {
+  // режем по запятым, но не внутри скобок
+  const parts: string[] = [];
+  let depth = 0, cur = '';
+  for (const ch of hint) {
+    if (ch === '(') depth++;
+    if (ch === ')') depth = Math.max(0, depth - 1);
+    if (ch === ',' && depth === 0) { parts.push(cur.trim()); cur = ''; continue; }
+    cur += ch;
+  }
+  if (cur.trim()) parts.push(cur.trim());
+  return (
+    <span class="fx-chips">
+      {parts.map((p, i) => <span key={i} class={`fxc ${effectTone(p)}`}>{p}</span>)}
+    </span>
+  );
+}

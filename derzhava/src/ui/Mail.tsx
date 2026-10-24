@@ -4,6 +4,7 @@ import { fmtDate } from '../game/format';
 import { answerLetter, claimLetter, giftParts, readLetter, unreadMail } from '../game/mail';
 import { emit, getGame, sfx, toast } from '../game/state';
 import type { GameState, Letter } from '../game/types';
+import { Effects } from './common';
 import { LetterArt } from './mailArt';
 import { prefs, report, setUI, ui, useStore } from './store';
 
@@ -71,7 +72,7 @@ export function MailButton() {
   return (
     <>
       {onMap && (
-        <button class={`mail-fab ${n ? 'has' : ''}`} onClick={() => open(n === 1 ? g.mail.find((l) => !l.read)?.id : undefined)} title="Почта (M)">
+        <button class={`mail-fab ${n ? 'has' : ''}`} onClick={() => open(g.mail.find((l) => !l.read)?.id)} title="Почта (M)">
           <span class="mi">{n ? '📬' : '📭'}</span>
           <span class="ml">Почта</span>
           {n > 0 && <span class="badge">{n}</span>}
@@ -92,14 +93,14 @@ export function MailButton() {
   );
 }
 
-export function MailModal({ id }: { id?: number }) {
+export function MailModal({ id, quick }: { id?: number; quick?: boolean }) {
   useStore();
   const g = getGame()!;
   const L = id !== undefined ? g.mail.find((l) => l.id === id) : undefined;
   const close = () => setUI({ modal: null });
   return (
     <div class="modal-bg mail-bg" onClick={(e) => { if (e.target === e.currentTarget) close(); }}>
-      {L ? <LetterView key={L.id} L={L} /> : <Inbox />}
+      {L ? <LetterView key={L.id} L={L} quick={quick} /> : <Inbox />}
     </div>
   );
 }
@@ -137,10 +138,11 @@ function Inbox() {
   );
 }
 
-function LetterView({ L }: { L: Letter }) {
+/** quick — письмо открыто сразу после ответа на предыдущее: без конверта и анимаций. */
+function LetterView({ L, quick }: { L: Letter; quick?: boolean }) {
   const g = getGame()!;
   // непрочитанное письмо сначала приходит в конверте
-  const [opening, setOpening] = useState(() => !L.read && prefs.fx);
+  const [opening, setOpening] = useState(() => !L.read && prefs.fx && !quick);
   useEffect(() => {
     if (!L.read) {
       readLetter(g, L.id);
@@ -153,36 +155,28 @@ function LetterView({ L }: { L: Letter }) {
   }, []);
   const nextUnread = g.mail.find((l) => !l.read && l.id !== L.id);
   const gift = L.gift;
-  // после ответа (и забранного подарка) письмо само уходит: к следующему непрочитанному или закрывается
-  const [auto, setAuto] = useState(false);
-  useEffect(() => {
-    if (!auto) return;
-    const t = setTimeout(() => {
-      const next = g.mail.find((l) => !l.read && l.id !== L.id);
-      if (next) open(next.id);
-      else setUI({ modal: null });
-    }, 1400);
-    return () => clearTimeout(t);
-  }, [auto]);
-  const settle = () => {
-    if (L.replies && L.answered === undefined) return;
-    if (L.gift && !L.claimed) return;
-    setAuto(true);
+  // ждёт ли письмо ответа или подарок ещё не забран
+  const pending = (L.replies && L.answered === undefined) || (gift && !L.claimed);
+  // ответили или забрали подарок — письмо сразу уходит: к следующему непрочитанному (без анимации) или закрывается
+  const leave = () => {
+    const next = g.mail.find((l) => !l.read && l.id !== L.id);
+    setUI({ modal: next ? { kind: 'mail', id: next.id, quick: true } : null });
   };
   const answer = (i: number) => {
     const err = answerLetter(g, L.id, i);
     if (err) return report(err);
+    // подарок не пропадёт вместе с письмом: забираем его заодно с ответом
+    if (gift && !L.claimed && !claimLetter(g, L.id)) toast(`🎁 ${gift.label}`, 'good');
     if (L.result) toast(`✉️ ${L.result}`, 'info');
-    emit();
-    settle();
+    leave();
   };
   const claim = () => {
     const err = claimLetter(g, L.id);
     report(err, `🎁 ${gift!.label}`);
-    if (!err && L.replies) settle();
+    if (!err && (!L.replies || L.answered !== undefined)) leave();
   };
   return (
-    <div class={`letter-stage ${opening ? 'opening' : ''}`}>
+    <div class={`letter-stage ${opening ? 'opening' : ''} ${quick ? 'instant' : ''}`}>
       {opening && (
         <div class="envelope" style={{ '--seal': L.seal }} aria-hidden="true">
           <i class="env-back" />
@@ -229,7 +223,7 @@ function LetterView({ L }: { L: Letter }) {
               L.replies.map((r, i) => (
                 <button key={i} class="btn ev-opt lr-opt" style={{ animationDelay: `${(opening ? 1.3 : 0.2) + i * 0.07}s` }} onClick={() => answer(i)}>
                   <span>{r.label}</span>
-                  <span class="h">{r.hint}</span>
+                  <Effects hint={r.hint} />
                 </button>
               ))
             ) : (
@@ -241,13 +235,12 @@ function LetterView({ L }: { L: Letter }) {
           </div>
         )}
       </article>
-      <div class="lt-actions">
-        {nextUnread ? (
-          <button class="btn block shine" onClick={() => open(nextUnread.id)}>✉️ Следующее письмо</button>
-        ) : (
-          <button class="btn ghost block" onClick={() => setUI({ modal: null })}>Закрыть</button>
-        )}
-      </div>
+      {/* письмо без ответа и подарка: «прочитано» — и сразу следующее */}
+      {!pending && (
+        <div class="lt-actions">
+          <button class="btn ghost block" onClick={leave}>{nextUnread ? `✓ Прочитано · ещё ${unreadMail(g)}` : 'Закрыть'}</button>
+        </div>
+      )}
     </div>
   );
 }

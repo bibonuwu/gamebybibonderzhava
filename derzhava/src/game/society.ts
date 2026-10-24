@@ -8,7 +8,7 @@ import {
 import { companyRef, computeAll, STATS } from './economy';
 import { fmt } from './format';
 import { initMarket, newGood } from './market';
-import { log, news, pick, rand, sfx } from './state';
+import { allBuildings, log, news, pick, rand, sfx } from './state';
 import type { Company, GameState, Genius, Sector } from './types';
 import { COUNTRY_DEFS, REGIONS, REGION_OF, TERRAIN } from './world';
 
@@ -128,9 +128,10 @@ function pickHQ(g: GameState, ci: number, sector: Sector): number {
   if (!regs.length) return g.countries[ci].capital;
   const need = SECTORS[sector].need;
   const withNeed: number[] = [];
-  for (const key in g.buildings) {
-    const b = g.buildings[+key];
-    const rid = REGION_OF[+key];
+  const { tiles, list } = allBuildings(g);
+  for (let k = 0; k < tiles.length; k++) {
+    const b = list[k];
+    const rid = REGION_OF[tiles[k]];
     if (b.type === need && b.progress === 0 && g.regions[rid].owner === ci && !withNeed.includes(rid)) withNeed.push(rid);
   }
   if (withNeed.length && rand(g) < 0.7) return pick(g, withNeed);

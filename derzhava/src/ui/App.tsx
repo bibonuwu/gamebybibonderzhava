@@ -3,7 +3,6 @@ import { DIFFICULTY, GOVS } from '../game/defs';
 import { fmt, fmtDate } from '../game/format';
 import { newGame } from '../game/newGame';
 import { hasSave, loadGame } from '../game/save';
-import { lodgeKnown } from '../game/lodge';
 import { getGame, setGame } from '../game/state';
 import type { Difficulty, GameState } from '../game/types';
 import { COUNTRY_DEFS, REGIONS, REGION_OF, isWater } from '../game/world';
@@ -20,6 +19,7 @@ import { BuildPanel } from './panels/BuildPanel';
 import { DiploPanel } from './panels/DiploPanel';
 import { LodgePanel } from './panels/LodgePanel';
 import { SpyPanel } from './panels/SpyPanel';
+import { UNPanel } from './panels/UNPanel';
 import { MarketPanel } from './panels/MarketPanel';
 import { PolicyPanel } from './panels/PolicyPanel';
 import { StatsPanel } from './panels/StatsPanel';
@@ -76,30 +76,33 @@ export function App({ map }: { map: MapView }) {
   );
 }
 
-/** Армия, дипломатия, тайная ложа и разведка — одна вкладка: война и мир в одном месте. */
+/** Армия, дипломатия, разведка, ложи и ООН — одна вкладка: война и мир в одном месте. */
 function WarAndPeace({ map }: { map: MapView }) {
   const g = getGame()!;
   const n = g.proposals.length;
-  const lodge = lodgeKnown(g);
-  const tab = ui.armyTab === 'lodge' && !lodge ? 'army' : ui.armyTab;
+  const tab = ui.armyTab;
+  // по чужой резолюции ещё не проголосовали — подсказка на вкладке ООН
+  const votes = g.assembly.res.filter((r) => r.passed === undefined && r.by !== g.player && !r.myVote).length;
   return (
     <>
       <PanelHero kind="army" />
       <Tabs<ArmyTab>
-        compact={lodge}
+        compact
         value={tab}
         onChange={(v) => setUI({ armyTab: v })}
         options={[
           { v: 'army', label: '⚔️ Армия' },
           { v: 'diplo', label: n ? `🤝 Дипломатия (${n})` : '🤝 Дипломатия' },
           { v: 'spy', label: '🕵️ Разведка' },
-          ...(lodge ? [{ v: 'lodge' as const, label: '👁️ Ложа' }] : []),
+          { v: 'lodge', label: g.order ? `${g.order.emblem} Ложи` : '👁️ Ложи' },
+          { v: 'un', label: votes ? `🌐 ООН (${votes})` : '🌐 ООН' },
         ]}
       />
       {tab === 'army' && <ArmyPanel map={map} />}
       {tab === 'diplo' && <DiploPanel map={map} />}
       {tab === 'spy' && <SpyPanel />}
       {tab === 'lodge' && <LodgePanel />}
+      {tab === 'un' && <UNPanel />}
     </>
   );
 }
@@ -244,6 +247,7 @@ function StartScreen({ map }: { map: MapView }) {
             <div>📋 Выполняйте задания (кнопка на карте) — за них дают награды.</div>
             <div>❔ Нажмите «?» у любой карточки — там подсказка.</div>
             <div>⌨️ На ПК: пробел — пауза, 1–6 — вкладки, WASD — карта, Esc — меню.</div>
+            <div>📐 Основайте свою масонскую ложу и 🌐 вносите резолюции в ООН — «Армия → Ложи» и «Армия → ООН».</div>
             <div>⚠️ Первые полтора года (≈9 минут на скорости ×1) боты не нападают — успейте окрепнуть.</div>
           </div>
         </Card>

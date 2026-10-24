@@ -1,3 +1,4 @@
+import { initAssembly } from './assembly';
 import { ARMS_BASE, FOOD_BASE, PERSONALITY_KEYS } from './defs';
 import { computeAll, STATS } from './economy';
 import { BASE_RATE } from './debt';
@@ -27,7 +28,8 @@ export function newGame(player: number, difficulty: Difficulty, seed = Date.now(
     missiles: [],
     fallout: {},
     un: [],
-    lodge: null!, // ложа, выборы и разведка создаются ниже, когда известны страны
+    lodge: null!, // ложа, ООН, выборы и разведка создаются ниже, когда известны страны
+    assembly: null!,
     elections: null!,
     intel: null!,
     finance: { base: BASE_RATE, shock: 0, nextCrisis: 1800 + Math.floor((seed >>> 3) % 1200) },
@@ -100,6 +102,7 @@ export function newGame(player: number, difficulty: Difficulty, seed = Date.now(
   }));
 
   g.lodge = initLodge(g);
+  g.assembly = initAssembly(g);
   g.elections = initElections(g);
   g.intel = initIntel(g);
 

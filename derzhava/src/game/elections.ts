@@ -10,7 +10,7 @@ import { computeAll, STATS } from './economy';
 import { fmt, fmtDate } from './format';
 import { foodDays } from './market';
 import { moodOf } from './people';
-import { banner, log, news, pick, rand, sfx } from './state';
+import { allBuildings, banner, log, news, pick, rand, sfx } from './state';
 import type { BuildingType, ElectionPromise, ElectionState, GameState, GovType, Personality } from './types';
 import { REGION_OF } from './world';
 
@@ -58,9 +58,10 @@ interface PromiseDef {
 const me = (g: GameState) => g.countries[g.player];
 function built(g: GameState, type: BuildingType) {
   let n = 0;
-  for (const key in g.buildings) {
-    const b = g.buildings[+key];
-    if (b.type === type && !(b.progress > 0 && b.level === 1) && g.regions[REGION_OF[+key]].owner === g.player) n++;
+  const { tiles, list } = allBuildings(g);
+  for (let k = 0; k < tiles.length; k++) {
+    const b = list[k];
+    if (b.type === type && !(b.progress > 0 && b.level === 1) && g.regions[REGION_OF[tiles[k]]].owner === g.player) n++;
   }
   return n;
 }

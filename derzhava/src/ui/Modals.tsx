@@ -11,11 +11,15 @@ import type { MapView } from '../map/MapView';
 import { AudioSettings } from './AudioSettings';
 import { InstallApp } from './InstallApp';
 import { MailModal } from './Mail';
-import { Bar, CountUp, KV, More, Rate, relColor } from './common';
+import { Bar, CountUp, Effects, KV, More, Rate, relColor } from './common';
 import { AttackDialog } from './panels/ArmyPanel';
 import { CountryDialog, ProposalRow } from './panels/DiploPanel';
 import { IncomeTable, StabilityBreakdown } from './panels/PolicyPanel';
 import { cycleSpeed, prefs, report, setPrefs, setUI, ui, useStore } from './store';
+
+const EVENT_TAG: Record<string, string> = {
+  event: '📜 Событие', demand: '📢 Голос народа', un: '🌐 Совет Безопасности ООН', lodge: '👁️ Тайная ложа', election: '🗳️ Выборы', debt: '🏦 Финансы',
+};
 
 export function Modals({ map }: { map: MapView }) {
   useStore();
@@ -26,19 +30,18 @@ export function Modals({ map }: { map: MapView }) {
     const ev = g.event;
     return (
       <div class="modal-bg">
-        <div class={`modal ${ev.kind ?? ''}`}>
-          {ev.kind === 'demand' && <div class="demand-tag">📢 Голос народа</div>}
-          {ev.kind === 'un' && <div class="demand-tag un">🌐 Совет Безопасности ООН</div>}
-          {ev.kind === 'lodge' && <div class="demand-tag lodge">👁️ Тайная ложа</div>}
-          {ev.kind === 'election' && <div class="demand-tag election">🗳️ Выборы</div>}
-          {ev.kind === 'debt' && <div class="demand-tag debt">🏦 Финансы</div>}
-          <div class="m-ic">{ev.icon}</div>
+        <div class={`modal ev-modal ${ev.kind ?? 'event'}`} key={`${ev.id}-${ev.title}`}>
+          <div class="ev-head" aria-hidden="true">
+            <i class="ev-rays" />
+            <span class="ev-medal"><span>{ev.icon}</span></span>
+          </div>
+          <div class="demand-tag">{EVENT_TAG[ev.kind ?? 'event']}</div>
           <h2>{ev.title}</h2>
-          <p>{ev.text}</p>
+          <p class="ev-text">{ev.text}</p>
           {ev.options.map((o, i) => (
             <button key={i} class="btn ev-opt" style={{ animationDelay: `${0.12 + i * 0.07}s` }} onClick={() => { resolveEvent(g, i); emit(); }}>
-              <span>{o.label}</span>
-              <span class="h">{o.hint}</span>
+              <span class="ev-label"><b class="ev-n">{i + 1}</b>{o.label}</span>
+              <Effects hint={o.hint} />
             </button>
           ))}
         </div>
@@ -48,7 +51,7 @@ export function Modals({ map }: { map: MapView }) {
   if (deals.length) return <DealModal key={deals[0].id} d={deals[0]} />;
   const m = ui.modal;
   if (!m) return null;
-  if (m.kind === 'mail') return <MailModal id={m.id} />;
+  if (m.kind === 'mail') return <MailModal id={m.id} quick={m.quick} />;
   const close = () => setUI({ modal: null });
   let body: ComponentChildren = null;
   if (m.kind === 'country') body = <CountryDialog id={m.id} />;

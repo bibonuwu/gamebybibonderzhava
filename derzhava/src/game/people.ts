@@ -6,7 +6,7 @@ import { computeAll, STATS } from './economy';
 import { fmt } from './format';
 import { buyArms, buyFood, buyQuote, foodDays } from './market';
 import { richTax, richTaxError, richTaxGain } from './society';
-import { log, mapDirty, news, rand, sfx } from './state';
+import { log, mapDirty, news, pick, putBuilding, rand, sfx } from './state';
 import type { BuildingType, GameState, LogEntry, TempMod } from './types';
 import { REGIONS, REGION_OF } from './world';
 
@@ -20,12 +20,20 @@ interface DemandOption {
   /** Мировая новость, если так поступил бот: {c} — страна. */
   news?: [string, LogEntry['kind']];
 }
+/** Текст требования; можно сменить и заголовок с иконкой — тогда одно и то же требование каждый раз звучит по-новому. */
+interface DemandText {
+  title?: string;
+  icon?: string;
+  text: string;
+}
 interface DemandDef {
   id: string;
   icon: string;
   title: string;
   slogan: string;
-  text: (g: GameState, ci: number) => string;
+  /** Общее требование (митинг, праздник): не повторяется, пока не прозвучат несколько других. */
+  generic?: boolean;
+  text: (g: GameState, ci: number) => string | DemandText;
   pressure: (g: GameState, ci: number) => number;
   options: DemandOption[];
 }
@@ -49,6 +57,26 @@ function relDemocracies(g: GameState, ci: number, v: number) {
 }
 const tell = (g: GameState, ci: number, text: string, kind: LogEntry['kind'] = 'info') => { if (ci === g.player) log(g, text, kind); };
 const has = (_g: GameState, ci: number, type: BuildingType) => STATS[ci].coverage[type];
+/** Случайный крупный город страны — чтобы требования приходили не только из столицы. */
+function city(g: GameState, ci: number): string {
+  const rs = [...STATS[ci].regions].sort((a, b) => g.regions[b].pop - g.regions[a].pop).slice(0, 6);
+  return REGIONS[rs.length ? pick(g, rs) : C(g, ci).capital].name;
+}
+const enemyNames = (g: GameState, ci: number) => enemiesOf(g, ci).map((e) => cname(g, e)).join('», «');
+
+const RALLY_WHO: [string, string][] = [
+  ['Гражданские активисты', 'просят'], ['Студенческий союз', 'просит'], ['Профсоюз рабочих', 'просит'], ['Совет пенсионеров', 'просит'],
+  ['Учителя и врачи', 'просят'], ['Молодёжное движение', 'просит'], ['Союз предпринимателей', 'просит'], ['Жители окраин', 'просят'],
+];
+const RALLY_FORM: [string, string, string][] = [
+  ['Мирный митинг', '✊', 'мирный митинг'],
+  ['Шествие с плакатами', '🪧', 'шествие с плакатами'],
+  ['Пикет у правительства', '📣', 'пикет у здания правительства'],
+  ['Марш за перемены', '🥁', 'марш с флагами и барабанами'],
+  ['Сидячая акция', '🧘', 'сидячую акцию на главной площади'],
+  ['Велопробег протеста', '🚲', 'велопробег по центру города'],
+  ['Концерт-протест', '🎸', 'концерт-протест под открытым небом'],
+];
 const factories = (_g: GameState, ci: number) => STATS[ci].counts.factory;
 
 /** Народная стройка: начинается сразу, даже если все стройплощадки заняты. Платит казна. */
@@ -60,7 +88,7 @@ function peopleBuild(g: GameState, ci: number, type: BuildingType): boolean {
   if (c.money < price) return false;
   c.money -= price;
   const t = buildTime(type, 1);
-  g.buildings[tile] = { type, level: 1, progress: t, total: t };
+  putBuilding(g, tile, { type, level: 1, progress: t, total: t });
   mapDirty.buildings = true;
   if (ci === g.player) sfx('build');
   computeAll(g);
@@ -87,20 +115,25 @@ function danger(g: GameState, ci: number): number {
 
 const DEMANDS: DemandDef[] = [
   {
-    id: 'rally', icon: '✊', title: 'Мирный митинг', slogan: 'За светлое будущее!',
-    text: (g, ci) => `Гражданские активисты просят разрешить мирный митинг в городе ${REGIONS[C(g, ci).capital].name}. Лозунг: «${topSlogan(g, ci)}»`,
+    id: 'rally', icon: '✊', title: 'Мирный митинг', slogan: 'За светлое будущее!', generic: true,
+    text: (g, ci) => {
+      const [who, verb] = pick(g, RALLY_WHO);
+      const [title, icon, form] = pick(g, RALLY_FORM);
+      return { title, icon, text: `${who} ${verb} разрешить ${form} в городе ${city(g, ci)}. Лозунг: «${topSlogan(g, ci)}»` };
+    },
+    // громкость — от самой острой проблемы: если ничего не болит, на улицы не выходят
     pressure: (g, ci) => {
       const top = moodOf(g, ci).find((m) => m.id !== 'rally' && m.id !== 'festival');
-      return 0.22 + 0.45 * (top?.pressure ?? 0) + (C(g, ci).stability < 45 ? 0.1 : 0);
+      return 0.08 + 0.5 * (top?.pressure ?? 0) + (C(g, ci).stability < 45 ? 0.1 : 0);
     },
     options: [
-      { label: 'Разрешить митинг', hint: (g, ci) => (C(g, ci).stability < 30 ? `стабильность +${free(g, ci) ? 4 : 2}, но митинг может перерасти в беспорядки` : `стабильность +${free(g, ci) ? 4 : 2}: людей услышали`),
+      { label: 'Разрешить', hint: (g, ci) => (C(g, ci).stability < 30 ? `стабильность +${free(g, ci) ? 4 : 2}, но акция может перерасти в беспорядки` : `стабильность +${free(g, ci) ? 4 : 2}: людей услышали`),
         apply: (g, ci) => {
           if (C(g, ci).stability < 30 && rand(g) < 0.3) {
-            stab(g, ci, -6, 120, 'Беспорядки после митинга');
-            tell(g, ci, '🔥 Митинг перерос в беспорядки', 'bad');
+            stab(g, ci, -6, 120, 'Беспорядки после акции');
+            tell(g, ci, '🔥 Акция протеста переросла в беспорядки', 'bad');
           } else {
-            stab(g, ci, free(g, ci) ? 4 : 2, 120, 'Мирный митинг');
+            stab(g, ci, free(g, ci) ? 4 : 2, 120, 'Мирная акция');
             C(g, ci).unrest = Math.max(0, C(g, ci).unrest - 1);
           }
         },
@@ -111,24 +144,31 @@ const DEMANDS: DemandDef[] = [
       { label: 'Запретить', hint: (g, ci) => (C(g, ci).gov === 'dictatorship' ? 'стабильность −1' : `стабильность −${free(g, ci) ? 7 : 3}, демократии осуждают`),
         apply: (g, ci) => {
           const gov = C(g, ci).gov;
-          stab(g, ci, gov === 'dictatorship' ? -1 : free(g, ci) ? -7 : -3, 150, 'Запрет митинга');
+          stab(g, ci, gov === 'dictatorship' ? -1 : free(g, ci) ? -7 : -3, 150, 'Запрет акции');
           if (gov !== 'dictatorship') relDemocracies(g, ci, -3);
         },
         ai: (g, ci) => (C(g, ci).gov === 'dictatorship' ? 1.6 : C(g, ci).gov === 'monarchy' ? 1 : 0.2) },
       { label: 'Разогнать силой', hint: (g, ci) => (C(g, ci).gov === 'dictatorship' ? 'стабильность +1 (страх), отношения −3 со всеми' : 'стабильность −12, отношения −6 со всеми'),
         apply: (g, ci) => {
           const dict = C(g, ci).gov === 'dictatorship';
-          stab(g, ci, dict ? 1 : -12, dict ? 60 : 200, 'Разгон митинга');
+          stab(g, ci, dict ? 1 : -12, dict ? 60 : 200, 'Разгон акции');
           C(g, ci).unrest += dict ? 0.5 : 2;
           g.countries.forEach((o, j) => { if (o.alive && j !== ci) addRel(g, ci, j, dict ? -3 : -6); });
         },
         ai: (g, ci) => (C(g, ci).gov === 'dictatorship' && C(g, ci).personality === 'aggressor' ? 1.8 : -1),
-        news: ['✊ {c}: мирный митинг разогнан силой', 'bad'] },
+        news: ['✊ {c}: мирная акция протеста разогнана силой', 'bad'] },
     ],
   },
   {
     id: 'taxes', icon: '💸', title: 'Налоги душат', slogan: 'Снизить налоги!',
-    text: (g, ci) => `Люди жалуются: налог ${Math.round(C(g, ci).tax * 100)}% — это слишком. Малый бизнес закрывается.`,
+    text: (g, ci) => {
+      const t = Math.round(C(g, ci).tax * 100);
+      return pick(g, [
+        `Люди жалуются: налог ${t}% — это слишком. Малый бизнес закрывается.`,
+        `Владельцы кафе и мастерских в городе ${city(g, ci)} повесили на двери таблички «Закрыто из-за налогов». Налог ${t}% съедает всю выручку.`,
+        `Таксисты устроили автопробег с плакатами «${t}% — это грабёж!». К ним присоединяются торговцы и фермеры.`,
+      ]);
+    },
     pressure: (g, ci) => clamp01((C(g, ci).tax - 0.2) * 3.5),
     options: [
       { label: 'Снизить налог на 5%', hint: () => 'стабильность +6 на 150 дн., миллиардеров станет больше',
@@ -145,7 +185,11 @@ const DEMANDS: DemandDef[] = [
   },
   {
     id: 'antiwar', icon: '🕊️', title: 'Народ устал от войны', slogan: 'Нет войне!',
-    text: (g, ci) => `Война с «${enemiesOf(g, ci).map((e) => cname(g, e)).join('», «')}» идёт слишком долго. Семьи ждут солдат домой.`,
+    text: (g, ci) => pick(g, [
+      `Война с «${enemyNames(g, ci)}» идёт слишком долго. Семьи ждут солдат домой.`,
+      `У вокзала в городе ${city(g, ci)} стоят женщины со свечами: война с «${enemyNames(g, ci)}» забирает сыновей. Люди просят мира.`,
+      `По улицам прошёл молчаливый марш: тысячи людей несли фотографии солдат. Война с «${enemyNames(g, ci)}» затянулась.`,
+    ]),
     pressure: (g, ci) => (atWarNow(g, ci) ? clamp01(C(g, ci).weariness / 70 + (C(g, ci).stability < 40 ? 0.2 : 0)) : 0),
     options: [
       { label: 'Начать мирные переговоры', hint: () => 'враги охотнее согласятся на мир, усталость −8, стабильность +4',
@@ -167,8 +211,14 @@ const DEMANDS: DemandDef[] = [
   {
     id: 'bread', icon: '🍞', title: 'Хлеба!', slogan: 'Хлеба и справедливых цен!',
     text: (g, ci) => (STATS[ci].hunger > 0
-      ? `В стране голод: еды не хватает ${Math.round(STATS[ci].hunger * 100)}% людей. Очереди за хлебом растут.`
-      : `Запасов еды осталось на ${Math.floor(foodDays(g, ci))} дн., цены в магазинах растут.`),
+      ? pick(g, [
+        `В стране голод: еды не хватает ${Math.round(STATS[ci].hunger * 100)}% людей. Очереди за хлебом растут.`,
+        `В городе ${city(g, ci)} люди с ночи стоят у пекарен с пустыми сумками. Еды не хватает ${Math.round(STATS[ci].hunger * 100)}% жителей.`,
+      ])
+      : pick(g, [
+        `Запасов еды осталось на ${Math.floor(foodDays(g, ci))} дн., цены в магазинах растут.`,
+        `Хозяйки скупают крупу и муку мешками: ходят слухи, что еды осталось на ${Math.floor(foodDays(g, ci))} дн.`,
+      ])),
     pressure: (g, ci) => {
       const s = STATS[ci];
       if (s.hunger > 0) return clamp01(0.6 + s.hunger);
@@ -190,7 +240,11 @@ const DEMANDS: DemandDef[] = [
   },
   {
     id: 'health', icon: '🏥', title: 'Больницы переполнены', slogan: 'Доступная медицина!',
-    text: () => 'Врачи и пациенты требуют денег на медицину: очереди к врачу — по месяцу.',
+    text: (g, ci) => pick(g, [
+      'Врачи и пациенты требуют денег на медицину: очереди к врачу — по месяцу.',
+      `Медсёстры больницы в городе ${city(g, ci)} вышли на пикет: лекарств не хватает, а смены длятся сутками.`,
+      'Скорая едет по два часа. Люди собирают подписи за новые больницы и зарплаты врачам.',
+    ]),
     pressure: (g, ci) => (C(g, ci).budget.health <= 1 ? 0.45 : 0) + (STATS[ci].growthYear < 0 ? 0.2 : 0) + (g.day > 300 && has(g, ci, 'hospital') < 0.3 ? 0.15 : 0),
     options: [
       { label: 'Поднять бюджет медицины', can: (g, ci) => C(g, ci).budget.health < 3, hint: () => 'расходы бюджета растут, стабильность +3',
@@ -206,7 +260,11 @@ const DEMANDS: DemandDef[] = [
   },
   {
     id: 'students', icon: '🎓', title: 'Студенты просят гранты', slogan: 'Образование для всех!',
-    text: () => 'Студенты вышли к университетам: учёба дорожает, лучшие выпускники уезжают за границу.',
+    text: (g, ci) => pick(g, [
+      'Студенты вышли к университетам: учёба дорожает, лучшие выпускники уезжают за границу.',
+      `Студенты в городе ${city(g, ci)} устроили «лекцию под открытым небом» прямо у здания правительства: стипендии не хватает даже на учебники.`,
+      'Выпускники собирают чемоданы: за границей молодым учёным платят втрое больше. Студенты просят гранты и общежития.',
+    ]),
     pressure: (g, ci) => (C(g, ci).budget.edu <= 1 ? 0.45 : 0) + (C(g, ci).scientists < STATS[ci].sciTarget * 0.9 ? 0.15 : 0) + (C(g, ci).scientists > STATS[ci].sciTarget * 1.05 ? 0.2 : 0),
     options: [
       { label: 'Гранты студентам', hint: (g, ci) => `−${fmt(cost(g, ci, 25))} 💰, учёных станет больше, стабильность +2`,
@@ -222,7 +280,10 @@ const DEMANDS: DemandDef[] = [
   },
   {
     id: 'richtax', icon: '💎', title: 'Богатые не платят', slogan: 'Справедливые налоги для богатых!',
-    text: (g, ci) => `В стране ${fmt(C(g, ci).billionaires)} миллиардеров, а простые люди едва сводят концы с концами. Народ требует справедливости.`,
+    text: (g, ci) => pick(g, [
+      `В стране ${fmt(C(g, ci).billionaires)} миллиардеров, а простые люди едва сводят концы с концами. Народ требует справедливости.`,
+      `Пока ${fmt(C(g, ci).billionaires)} миллиардеров покупают яхты, в городе ${city(g, ci)} закрывают библиотеки. Люди требуют, чтобы богатые платили больше.`,
+    ]),
     pressure: (g, ci) => {
       const c = C(g, ci);
       if (c.billionaires < 3 || richTaxError(g, ci)) return 0;
@@ -243,7 +304,11 @@ const DEMANDS: DemandDef[] = [
   },
   {
     id: 'ecology', icon: '🌳', title: 'Экологи против заводов', slogan: 'Чистый воздух!',
-    text: (g, ci) => `${factories(g, ci)} заводов дымят над городами. Экологи требуют защитить природу.`,
+    text: (g, ci) => pick(g, [
+      `${factories(g, ci)} заводов дымят над городами. Экологи требуют защитить природу.`,
+      `Над городом ${city(g, ci)} висит рыжий смог, дети кашляют. Экологи надели противогазы и встали живой цепью у заводских ворот.`,
+      'В реке у заводов всплыла рыба. Экологи требуют фильтры на трубы и штрафы для тех, кто загрязняет.',
+    ]),
     pressure: (g, ci) => (factories(g, ci) > 6 ? Math.min(0.7, (factories(g, ci) - 6) / 14) + (C(g, ci).gov === 'democracy' ? 0.1 : 0) : 0),
     options: [
       { label: 'Зелёные технологии', hint: (g, ci) => `−${fmt(cost(g, ci, 35))} 💰, стабильность +6 на 200 дн.`,
@@ -259,7 +324,10 @@ const DEMANDS: DemandDef[] = [
   },
   {
     id: 'mothers', icon: '🪖', title: 'Матери солдат', slogan: 'Верните наших сыновей!',
-    text: () => 'Комитет солдатских матерей требует отменить призыв: молодые ребята гибнут и калечатся.',
+    text: (g) => pick(g, [
+      'Комитет солдатских матерей требует отменить призыв: молодые ребята гибнут и калечатся.',
+      'Матери солдат приехали к министерству обороны с портретами сыновей. Они требуют отменить призыв.',
+    ]),
     pressure: (g, ci) => {
       const c = C(g, ci);
       if (c.armyType !== 'conscript') return 0;
@@ -279,7 +347,10 @@ const DEMANDS: DemandDef[] = [
   },
   {
     id: 'freedom', icon: '🗳️', title: 'Требуем выборов', slogan: 'Свободные выборы!',
-    text: (g, ci) => `Оппозиция собирает тысячи людей: «${C(g, ci).gov === 'monarchy' ? 'Конституцию и парламент' : 'Долой диктатуру'}!»`,
+    text: (g, ci) => pick(g, [
+      `Оппозиция собирает тысячи людей: «${C(g, ci).gov === 'monarchy' ? 'Конституцию и парламент' : 'Долой диктатуру'}!»`,
+      'Студенты расклеили листовки «Мы хотим выбирать!», а по вечерам люди стучат в кастрюли на балконах.',
+    ]),
     pressure: (g, ci) => {
       const c = C(g, ci);
       if (c.gov !== 'dictatorship' && c.gov !== 'monarchy') return 0;
@@ -312,7 +383,10 @@ const DEMANDS: DemandDef[] = [
   },
   {
     id: 'faith', icon: '⛪', title: 'Верующие просят храм', slogan: 'Уважайте веру!',
-    text: () => 'Верующие собирают подписи: в новых районах нет ни одного храма.',
+    text: (g, ci) => pick(g, [
+      'Верующие собирают подписи: в новых районах нет ни одного храма.',
+      `Прихожане в городе ${city(g, ci)} молятся под открытым небом: старый храм тесен, а нового нет.`,
+    ]),
     pressure: (g, ci) => {
       const r = C(g, ci).religion;
       if (r === 'state' || r === 'theocracy') return has(g, ci, 'temple') < 0.6 ? 0.45 : 0.1;
@@ -332,7 +406,10 @@ const DEMANDS: DemandDef[] = [
   },
   {
     id: 'migrants', icon: '🧳', title: 'Споры о мигрантах', slogan: 'Наведите порядок на границе!',
-    text: () => 'Одни требуют закрыть границы, другие — защитить приезжих. Страна спорит.',
+    text: (g, ci) => pick(g, [
+      'Одни требуют закрыть границы, другие — защитить приезжих. Страна спорит.',
+      `В городе ${city(g, ci)} спорят до хрипоты: одни несут приезжим одеяла, другие требуют закрыть границу.`,
+    ]),
     pressure: (g, ci) => (C(g, ci).migration === 2 ? 0.45 + (C(g, ci).stability < 50 ? 0.2 : 0) : C(g, ci).migration === 1 && C(g, ci).stability < 45 ? 0.25 : 0),
     options: [
       { label: 'Ограничить миграцию', can: (g, ci) => C(g, ci).migration > 0, hint: () => 'миграция на ступень строже',
@@ -348,7 +425,10 @@ const DEMANDS: DemandDef[] = [
   },
   {
     id: 'jobs', icon: '🏭', title: 'Нужна работа', slogan: 'Работу людям!',
-    text: () => 'В городах растёт безработица. Люди просят открыть новые предприятия.',
+    text: (g, ci) => pick(g, [
+      'В городах растёт безработица. Люди просят открыть новые предприятия.',
+      `У биржи труда в городе ${city(g, ci)} очередь с самого утра. Молодёжь просит работу, а не пособия.`,
+    ]),
     pressure: (g, ci) => (g.day > 150 && has(g, ci, 'factory') < 0.35 ? 0.4 : 0) + (STATS[ci].moneyRate < 0 ? 0.15 : 0),
     options: [
       { label: 'Построить завод', hint: (g, ci) => buildHint(g, ci, 'factory'),
@@ -382,8 +462,12 @@ const DEMANDS: DemandDef[] = [
     ],
   },
   {
-    id: 'festival', icon: '🎉', title: 'Народ хочет праздника', slogan: 'Праздник для всех!',
-    text: () => 'Дела идут хорошо, и люди хотят отметить успехи страны большим праздником.',
+    id: 'festival', icon: '🎉', title: 'Народ хочет праздника', slogan: 'Праздник для всех!', generic: true,
+    text: (g, ci) => pick<string | DemandText>(g, [
+      'Дела идут хорошо, и люди хотят отметить успехи страны большим праздником.',
+      { title: 'Карнавал!', icon: '🎭', text: 'Люди предлагают устроить карнавал: маски, фейерверки, уличная еда и танцы до утра.' },
+      { title: 'Юбилей города', icon: '🎂', text: `Городу ${city(g, ci)} исполняется круглая дата. Жители просят праздник на всю страну.` },
+    ]),
     pressure: (g, ci) => (C(g, ci).stability > 65 && !atWarNow(g, ci) ? 0.3 : 0),
     options: [
       { label: 'Народные гуляния', hint: (g, ci) => `−${fmt(cost(g, ci, 15))} 💰, стабильность +6 на 120 дн.`,
@@ -396,7 +480,10 @@ const DEMANDS: DemandDef[] = [
   },
   {
     id: 'labs', icon: '🔬', title: 'Учёным нужны лаборатории', slogan: 'Науке — финансирование!',
-    text: (g, ci) => `У нас ${fmt(C(g, ci).scientists)} учёных, но лабораторий не хватает. Без них учёные уедут туда, где их ценят.`,
+    text: (g, ci) => pick(g, [
+      `У нас ${fmt(C(g, ci).scientists)} учёных, но лабораторий не хватает. Без них учёные уедут туда, где их ценят.`,
+      'Молодые учёные ставят опыты в подвалах и на кухнях. Они просят лаборатории и оборудование.',
+    ]),
     pressure: (g, ci) => (C(g, ci).scientists > STATS[ci].sciTarget * 1.03 ? 0.35 : 0) + (g.day > 200 && has(g, ci, 'university') < 0.3 ? 0.25 : 0),
     options: [
       { label: 'Построить университет', hint: (g, ci) => buildHint(g, ci, 'university'),
@@ -412,7 +499,10 @@ const DEMANDS: DemandDef[] = [
   },
   {
     id: 'farmers', icon: '🚜', title: 'Фермеры недовольны ценами', slogan: 'Поддержите село!',
-    text: () => 'Зерно на мировом рынке подешевело, и фермеры работают себе в убыток. Они перекрыли трассы тракторами.',
+    text: (g) => pick(g, [
+      'Зерно на мировом рынке подешевело, и фермеры работают себе в убыток. Они перекрыли трассы тракторами.',
+      'Фермеры привезли к министерству грузовик картошки и раздают её бесплатно: «Всё равно продаём дешевле себестоимости».',
+    ]),
     pressure: (g, ci) => (g.market.food.price < FOOD_BASE * 0.8 && STATS[ci].foodProd > STATS[ci].foodCons * 1.15 ? 0.45 : 0),
     options: [
       { label: 'Субсидии фермерам', hint: (g, ci) => `−${fmt(cost(g, ci, 20))} 💰, урожай +10% на 300 дн., стабильность +3`,
@@ -439,6 +529,182 @@ const DEMANDS: DemandDef[] = [
         ai: () => 1 },
     ],
   },
+  {
+    id: 'roads', icon: '🛣️', title: 'Дороги разбиты', slogan: 'Дороги, а не ямы!',
+    text: (g, ci) => pick(g, [
+      'Водители жалуются: на трассах ямы размером с ванну. Грузовики ломаются, товары едут неделями.',
+      `Жители города ${city(g, ci)} высадили цветы прямо в ямы на главной улице — и сфотографировали для газет.`,
+      'Между городами легче долететь, чем доехать. Люди просят дороги и мосты.',
+    ]),
+    pressure: (g, ci) => (C(g, ci).budget.infra <= 1 ? 0.45 : 0) + (g.day > 250 && STATS[ci].regions.length >= 8 && C(g, ci).budget.infra < 3 ? 0.15 : 0),
+    options: [
+      { label: 'Поднять бюджет инфраструктуры', can: (g, ci) => C(g, ci).budget.infra < 3, hint: () => 'производительность выше, стабильность +3',
+        apply: (g, ci) => { C(g, ci).budget.infra++; stab(g, ci, 3, 120, 'Деньги на дороги'); },
+        ai: (_g, ci) => (STATS[ci].moneyRate > STATS[ci].taxIncome * 0.1 ? 1.8 : 0.4) },
+      { label: 'Отремонтировать главные трассы', hint: (g, ci) => `−${fmt(cost(g, ci, 25))} 💰, производительность +4% на 250 дн., стабильность +2`,
+        apply: (g, ci) => { pay(g, ci, 25); mod(g, ci, 'prod', 0.04, 250, 'Новые дороги'); stab(g, ci, 2, 120, 'Новые дороги'); },
+        ai: (g, ci) => (rich(g, ci) ? 1.7 : 0.6) },
+      { label: 'Ямы — это традиция', hint: () => 'стабильность −3',
+        apply: (g, ci) => stab(g, ci, -3, 120, 'Разбитые дороги'),
+        ai: (g, ci) => (broke(g, ci) ? 1.3 : 0) },
+    ],
+  },
+  {
+    id: 'housing', icon: '🏘️', title: 'Жильё не по карману', slogan: 'Квартиры молодым семьям!',
+    text: (g, ci) => pick(g, [
+      'Молодые семьи по десять лет копят на квартиру и живут у родителей. Люди просят доступное жильё.',
+      `В городе ${city(g, ci)} аренда подорожала вдвое. Студенты живут по шестеро в комнате.`,
+    ]),
+    pressure: (_g, ci) => (STATS[ci].civPop > STATS[ci].popCap * 0.92 ? 0.4 : 0) + (STATS[ci].growthYear > 1.2 ? 0.2 : 0),
+    options: [
+      { label: 'Льготная ипотека', hint: (g, ci) => `−${fmt(cost(g, ci, 30))} 💰, рост 👥 +0.3%/год на 300 дн., стабильность +4`,
+        apply: (g, ci) => { pay(g, ci, 30); mod(g, ci, 'growth', 0.3, 300, 'Льготная ипотека'); stab(g, ci, 4, 150, 'Льготная ипотека'); },
+        ai: (g, ci) => (rich(g, ci) ? 1.8 : 0.6) },
+      { label: 'Государственная стройка жилья', hint: (g, ci) => `−${fmt(cost(g, ci, 45))} 💰, стабильность +6 на 200 дн.`,
+        apply: (g, ci) => { pay(g, ci, 45); stab(g, ci, 6, 200, 'Новые кварталы'); },
+        ai: (g, ci) => (rich(g, ci) ? 1.5 : 0.3) },
+      { label: 'Рынок отрегулирует', hint: () => 'стабильность −4',
+        apply: (g, ci) => stab(g, ci, -4, 120, 'Дорогое жильё'),
+        ai: (g, ci) => (broke(g, ci) || C(g, ci).personality === 'trader' ? 1.3 : 0.2) },
+    ],
+  },
+  {
+    id: 'pensions', icon: '👵', title: 'Пенсионеры просят прибавки', slogan: 'Достойную пенсию!',
+    text: (g, ci) => pick(g, [
+      'Пенсионеры пишут коллективное письмо: пенсии не хватает даже на лекарства и коммуналку.',
+      `Бабушки из города ${city(g, ci)} вышли на площадь с самодельными плакатами и термосами с чаем.`,
+      'Ветераны труда просят поднять пенсии: «Мы строили эту страну — не забывайте нас».',
+    ]),
+    pressure: (g, ci) => (g.day > 200 ? 0.12 + (C(g, ci).budget.health <= 1 ? 0.3 : 0) + (C(g, ci).stability < 50 ? 0.15 : 0) + (broke(g, ci) ? 0.1 : 0) : 0),
+    options: [
+      { label: 'Поднять пенсии', hint: (g, ci) => `−${fmt(cost(g, ci, 30))} 💰, стабильность +5 на 200 дн.`,
+        apply: (g, ci) => { pay(g, ci, 30); stab(g, ci, 5, 200, 'Прибавка к пенсии'); },
+        ai: (g, ci) => (rich(g, ci) ? 1.9 : 0.6) + (free(g, ci) ? 0.4 : 0) },
+      { label: 'Разовая выплата к празднику', hint: (g, ci) => `−${fmt(cost(g, ci, 10))} 💰, стабильность +2`,
+        apply: (g, ci) => { pay(g, ci, 10); stab(g, ci, 2, 90, 'Выплата пенсионерам'); },
+        ai: () => 1.2 },
+      { label: 'Денег нет, но держитесь', hint: () => 'стабильность −5, над вами смеются в интернете',
+        apply: (g, ci) => stab(g, ci, -5, 150, 'Обиженные пенсионеры'),
+        ai: (g, ci) => (broke(g, ci) ? 1.4 : 0) },
+    ],
+  },
+  {
+    id: 'corruption', icon: '🕵️', title: 'Хватит воровать!', slogan: 'Чиновников — к ответу!',
+    text: (g, ci) => pick(g, [
+      'Журналисты нашли у замминистра дворец с золотыми унитазами. Люди требуют наказать коррупционеров.',
+      `Мэр города ${city(g, ci)} построил себе третью дачу, а дорога к школе так и не готова. Народ возмущён.`,
+      'Блогер выложил видео: чиновник в часах ценой в сто зарплат учителя. Ролик посмотрела вся страна.',
+    ]),
+    pressure: (g, ci) => {
+      const c = C(g, ci);
+      if (g.day < 300) return 0;
+      return 0.08 + (c.gov === 'dictatorship' || c.gov === 'monarchy' ? 0.15 : 0) + (c.stability < 50 ? 0.2 : 0) + (c.tax > 0.3 ? 0.1 : 0);
+    },
+    options: [
+      { label: 'Антикоррупционный комитет', hint: (g, ci) => `−${fmt(cost(g, ci, 20))} 💰, производительность +5% на 300 дн., стабильность +3`,
+        apply: (g, ci) => { pay(g, ci, 20); mod(g, ci, 'prod', 0.05, 300, 'Борьба с коррупцией'); stab(g, ci, 3, 150, 'Борьба с коррупцией'); },
+        ai: (g, ci) => (free(g, ci) ? 1.8 : 0.8) },
+      { label: 'Показательный процесс', hint: () => 'стабильность +5 на 100 дн., чиновники напуганы',
+        apply: (g, ci) => { stab(g, ci, 5, 100, 'Показательный процесс'); C(g, ci).unrest = Math.max(0, C(g, ci).unrest - 0.5); },
+        ai: (g, ci) => (C(g, ci).gov === 'dictatorship' ? 1.7 : 1) },
+      { label: 'Это клевета оппозиции', hint: (g, ci) => `стабильность −${free(g, ci) ? 6 : 3}, демократии хмурятся`,
+        apply: (g, ci) => { stab(g, ci, free(g, ci) ? -6 : -3, 150, 'Коррупция без наказания'); relDemocracies(g, ci, -2); },
+        ai: (g, ci) => (C(g, ci).personality === 'aggressor' ? 1 : 0.2),
+        news: ['🕵️ {c}: власти назвали коррупционный скандал «клеветой»', 'bad'] },
+    ],
+  },
+  {
+    id: 'crime', icon: '🚨', title: 'Преступность растёт', slogan: 'Безопасные улицы!',
+    text: (g, ci) => pick(g, [
+      'По вечерам люди боятся выходить из дома: кражи и грабежи участились.',
+      `В городе ${city(g, ci)} за неделю ограбили три банка и кондитерскую. Жители просят навести порядок.`,
+    ]),
+    pressure: (g, ci) => clamp01(Math.max(0, C(g, ci).unrest - 0.5) * 0.3 + (C(g, ci).stability < 40 ? 0.3 : 0) + (STATS[ci].hunger > 0 ? 0.15 : 0)),
+    options: [
+      { label: 'Больше полиции на улицах', hint: (g, ci) => `−${fmt(cost(g, ci, 20))} 💰, стабильность +4, волнения стихают`,
+        apply: (g, ci) => { pay(g, ci, 20); stab(g, ci, 4, 150, 'Полиция на улицах'); C(g, ci).unrest = Math.max(0, C(g, ci).unrest - 1); },
+        ai: (g, ci) => (rich(g, ci) ? 1.8 : 0.8) },
+      { label: 'Кружки и спорт для молодёжи', hint: (g, ci) => `−${fmt(cost(g, ci, 15))} 💰, стабильность +2, 🧠 +3% на 200 дн.`,
+        apply: (g, ci) => { pay(g, ci, 15); stab(g, ci, 2, 150, 'Занятия для молодёжи'); mod(g, ci, 'brains', 0.03, 200, 'Занятия для молодёжи'); },
+        ai: (g, ci) => (C(g, ci).personality === 'scientist' ? 1.8 : 0.9) },
+      { label: 'Жёсткие законы', hint: (g, ci) => (C(g, ci).gov === 'dictatorship' ? 'стабильность +2' : 'стабильность −2, демократии осуждают'),
+        apply: (g, ci) => {
+          const dict = C(g, ci).gov === 'dictatorship';
+          stab(g, ci, dict ? 2 : -2, 120, 'Жёсткие законы');
+          if (!dict) relDemocracies(g, ci, -2);
+        },
+        ai: (g, ci) => (C(g, ci).gov === 'dictatorship' ? 1.6 : 0.3) },
+    ],
+  },
+  {
+    id: 'culture', icon: '🎭', title: 'Театрам нужна поддержка', slogan: 'Культура — душа страны!',
+    text: (g, ci) => pick(g, [
+      'Актёры, музыканты и художники просят помочь: в старом театре течёт крыша, а в музее нет денег на свет.',
+      `Знаменитый оркестр из города ${city(g, ci)} играет в подземном переходе: зал закрыли на ремонт десять лет назад.`,
+      'Писатели собирают подписи за новые библиотеки и книжные фестивали.',
+    ]),
+    pressure: (g, ci) => (C(g, ci).stability > 55 && !atWarNow(g, ci) && g.day > 120 ? 0.2 + (C(g, ci).budget.edu <= 1 ? 0.15 : 0) : 0),
+    options: [
+      { label: 'Грант театрам и музеям', hint: (g, ci) => `−${fmt(cost(g, ci, 12))} 💰, стабильность +3, отношения +1 со всеми`,
+        apply: (g, ci) => {
+          pay(g, ci, 12); stab(g, ci, 3, 150, 'Поддержка культуры');
+          g.countries.forEach((o, j) => { if (o.alive && j !== ci) addRel(g, ci, j, 1); });
+        },
+        ai: (g, ci) => (rich(g, ci) ? 1.6 : 0.6) },
+      { label: 'Бесплатный день в музеях', hint: (g, ci) => `−${fmt(cost(g, ci, 4))} 💰, стабильность +2, 🧠 +2% на 150 дн.`,
+        apply: (g, ci) => { pay(g, ci, 4); stab(g, ci, 2, 100, 'Музеи для всех'); mod(g, ci, 'brains', 0.02, 150, 'Музеи для всех'); },
+        ai: () => 1.2 },
+      { label: 'Искусство подождёт', hint: () => 'стабильность −2',
+        apply: (g, ci) => stab(g, ci, -2, 100, 'Культура без денег'),
+        ai: (g, ci) => (broke(g, ci) ? 1.2 : 0.1) },
+    ],
+  },
+  {
+    id: 'press', icon: '📰', title: 'Свободу прессе!', slogan: 'Правду — в эфир!',
+    text: (g, ci) => pick(g, [
+      'Журналисты вышли с заклеенными ртами: закрыта ещё одна независимая газета.',
+      `Студенты в городе ${city(g, ci)} печатают самиздат на старом принтере и раздают у метро.`,
+    ]),
+    pressure: (g, ci) => {
+      const c = C(g, ci);
+      if (c.gov === 'dictatorship') return 0.3 + (c.stability < 50 ? 0.2 : 0);
+      return c.gov === 'monarchy' && c.stability < 55 ? 0.2 : 0;
+    },
+    options: [
+      { label: 'Ослабить цензуру', hint: () => 'стабильность +4, демократии одобряют',
+        apply: (g, ci) => { stab(g, ci, 4, 150, 'Свобода слова'); relDemocracies(g, ci, 3); },
+        ai: (g, ci) => (C(g, ci).stability < 35 ? 1.8 : 0.7),
+        news: ['📰 {c} ослабила цензуру', 'good'] },
+      { label: 'Новый государственный телеканал', hint: (g, ci) => `−${fmt(cost(g, ci, 15))} 💰, стабильность +2`,
+        apply: (g, ci) => { pay(g, ci, 15); stab(g, ci, 2, 120, 'Госпропаганда'); },
+        ai: () => 1.3 },
+      { label: 'Закрыть газеты', hint: (g, ci) => (C(g, ci).gov === 'dictatorship' ? 'стабильность −1, демократии осуждают' : 'стабильность −6, демократии осуждают'),
+        apply: (g, ci) => { stab(g, ci, C(g, ci).gov === 'dictatorship' ? -1 : -6, 150, 'Закрытые газеты'); relDemocracies(g, ci, -3); C(g, ci).unrest += 0.5; },
+        ai: (g, ci) => (C(g, ci).personality === 'aggressor' || C(g, ci).personality === 'fanatic' ? 1.5 : 0.2),
+        news: ['📰 {c}: закрыты последние независимые газеты', 'bad'] },
+    ],
+  },
+  {
+    id: 'sport', icon: '⚽', title: 'Стадион для города', slogan: 'Спорт — это здоровье!',
+    generic: true,
+    text: (g, ci) => pick(g, [
+      `Болельщики из города ${city(g, ci)} просят новый стадион: старый помнит ещё прадедов нынешних игроков.`,
+      { title: 'Спортивные секции', icon: '🏊', text: 'Родители просят бесплатные секции: дети сидят в телефонах, а бассейн закрыт третий год.' },
+      { title: 'Сборной нужна база', icon: '🏅', text: 'Олимпийская сборная тренируется во дворе школы. Спортсмены просят базу и тренеров.' },
+    ]),
+    pressure: (g, ci) => (C(g, ci).stability > 50 && !atWarNow(g, ci) && g.day > 180 ? 0.22 : 0),
+    options: [
+      { label: 'Построить стадион', hint: (g, ci) => `−${fmt(cost(g, ci, 30))} 💰, стабильность +5 на 250 дн.`,
+        apply: (g, ci) => { pay(g, ci, 30); stab(g, ci, 5, 250, 'Новый стадион'); },
+        ai: (g, ci) => (rich(g, ci) ? 1.7 : 0.4) },
+      { label: 'Секции для детей', hint: (g, ci) => `−${fmt(cost(g, ci, 10))} 💰, рост 👥 +0.1%/год, стабильность +2`,
+        apply: (g, ci) => { pay(g, ci, 10); mod(g, ci, 'growth', 0.1, 250, 'Детский спорт'); stab(g, ci, 2, 120, 'Детский спорт'); },
+        ai: () => 1.3 },
+      { label: 'Не до спорта', hint: () => 'стабильность −1',
+        apply: (g, ci) => stab(g, ci, -1, 60, 'Спорт без денег'),
+        ai: (g, ci) => (broke(g, ci) ? 1.2 : 0.1) },
+    ],
+  },
 ];
 const DEMAND_BY_ID = Object.fromEntries(DEMANDS.map((d) => [d.id, d])) as Record<string, DemandDef>;
 
@@ -463,29 +729,41 @@ const topSlogan = (g: GameState, ci: number) => moodOf(g, ci).find((m) => m.id !
 
 // ---------- игрок ----------
 /** Народ выдвигает требование игроку: чем громче проблема, тем вероятнее именно она. */
+/** Сколько последних требований помнить: недавние звучат реже, общие (митинг, праздник) — не повторяются вовсе. */
+const RECENT = 6;
+/** Вес требования по тому, как давно оно звучало (0 — только что). Острая проблема может вернуться, но не сразу. */
+const RECENT_W = [0, 0, 0.15, 0.3, 0.5, 0.75];
+
 export function triggerDemand(g: GameState) {
   const ci = g.player;
   g.nextDemandDay = g.day + 80 + Math.floor(rand(g) * 60);
-  const last = g.counters.lastDemand ?? -1;
-  // первое обращение народа — мирный митинг
+  const recent = (g.recentDemands ??= []);
+  // первое обращение народа — мирная акция
   const first = !(g.counters.demands ?? 0);
-  const cands = DEMANDS.map((d, k) => ({ k, p: first ? (d.id === 'rally' ? 1 : 0) : d.pressure(g, ci) })).filter((x) => x.p >= 0.2 && x.k !== last);
+  const cands = DEMANDS.map((d, k) => {
+    const ago = recent.length - 1 - recent.lastIndexOf(d.id);
+    const p = first ? (d.id === 'rally' ? 1 : 0) : d.pressure(g, ci);
+    const w = ago >= recent.length ? 1 : d.generic ? 0 : RECENT_W[ago] ?? 1;
+    return { k, p, w: p * p * w };
+  }).filter((x) => x.p >= 0.2 && x.w > 0);
   if (!cands.length) {
     g.nextDemandDay = g.day + 40;
     return;
   }
-  const total = cands.reduce((a, x) => a + x.p * x.p, 0);
-  let r = rand(g) * total;
+  let r = rand(g) * cands.reduce((a, x) => a + x.w, 0);
   let k = cands[0].k;
   for (const x of cands) {
-    r -= x.p * x.p;
+    r -= x.w;
     if (r <= 0) { k = x.k; break; }
   }
   const d = DEMANDS[k];
-  g.counters.lastDemand = k;
+  recent.push(d.id);
+  if (recent.length > RECENT) recent.shift();
   const opts = d.options.map((o, idx) => ({ o, idx })).filter(({ o }) => !o.can || o.can(g, ci));
+  const t = d.text(g, ci);
+  const v: DemandText = typeof t === 'string' ? { text: t } : t;
   g.event = {
-    id: d.id, kind: 'demand', title: d.title, icon: d.icon, text: d.text(g, ci),
+    id: d.id, kind: 'demand', title: v.title ?? d.title, icon: v.icon ?? d.icon, text: v.text,
     options: opts.map(({ o, idx }) => ({ label: o.label, hint: o.hint(g, ci), idx })),
   };
   sfx('event');
@@ -500,7 +778,7 @@ export function resolveDemand(g: GameState, option: number) {
   if (!d || !opt) return;
   opt.apply(g, g.player);
   g.counters.demands = (g.counters.demands ?? 0) + 1;
-  log(g, `📢 ${d.icon} ${d.title}: «${opt.label}»`, 'info', false);
+  log(g, `📢 ${ev.icon} ${ev.title}: «${opt.label}»`, 'info', false);
   computeAll(g);
 }
 

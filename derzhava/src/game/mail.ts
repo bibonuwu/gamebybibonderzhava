@@ -6,7 +6,8 @@ import { START_YEAR } from './defs';
 import { computeAll, STATS } from './economy';
 import { fmt } from './format';
 import { BAN_STAB, banLodge, joinLodge, LODGE_NAME, RANKS, refuseLodge } from './lodge';
-import { log, pick, rand, sfx } from './state';
+import { acceptAsk, inOrder, orderMembers, refuseAsk } from './order';
+import { allBuildings, log, pick, rand, sfx } from './state';
 import type { GameState, Letter, LetterGift, TempMod } from './types';
 import { COUNTRY_DEFS, REGIONS, REGION_OF } from './world';
 
@@ -57,9 +58,10 @@ const pay = (g: GameState, v: number) => { C(g).money -= v; };
 const relAll = (g: GameState, v: number) => bots(g).forEach((i) => addRel(g, g.player, i, v));
 /** Регион, где стоит здание этого типа (или любой свой). */
 function regionWith(g: GameState, type: string): string {
-  for (const key in g.buildings) {
-    const b = g.buildings[+key];
-    if (b.type === type && g.regions[REGION_OF[+key]].owner === g.player) return REGIONS[REGION_OF[+key]].name;
+  const { tiles, list } = allBuildings(g);
+  for (let k = 0; k < tiles.length; k++) {
+    const rid = REGION_OF[tiles[k]];
+    if (list[k].type === type && g.regions[rid].owner === g.player) return REGIONS[rid].name;
   }
   return myRegion(g);
 }
@@ -308,7 +310,7 @@ const MAIL: MailDef[] = [
     sign: 'Дед Мороз, Великий Устюг', gift: { money: inc(g) * 30, stab: 3, label: 'Подарок под ёлкой' },
   }) },
   // тайная ложа: приглашение и новые степени (см. lodge.ts)
-  { id: 'lodge_invite', story: true, when: (g) => g.day >= 240 && g.lodge.status === 'none' && g.lodge.members.some((k) => k !== g.player && g.countries[k].alive), make: (g) => ({
+  { id: 'lodge_invite', story: true, when: (g) => g.day >= 240 && g.lodge.status === 'none' && !g.order && g.lodge.members.some((k) => k !== g.player && g.countries[k].alive), make: (g) => ({
     from: 'Незнакомец в сером плаще', icon: '🕴️', subject: 'Сжечь после прочтения', art: 'lodge', paper: 'lodge', stamp: '👁️', seal: '#8a6a24',
     body: [
       `${hello(g)} Вы нас не знаете, но мы давно за вами наблюдаем. Мы — вольные каменщики, ложа «${LODGE_NAME}». Среди наших братьев — правители ${g.lodge.members.filter((k) => k !== g.player && g.countries[k].alive).length} стран мира.`,
@@ -324,7 +326,7 @@ const MAIL: MailDef[] = [
     ],
   }), answer: (g, _L, o) => {
     if (g.lodge.status !== 'none') return 'Вы уже сделали выбор — письмо осталось лишь сжечь.';
-    if (o === 0) { joinLodge(g); return 'В полночь вы поднялись на третий этаж. Свеча, фартук, клятва — и вот вы среди братьев. Загляните во вкладку «Армия → 👁️ Ложа».'; }
+    if (o === 0) { const err = joinLodge(g); if (err) return err; return 'В полночь вы поднялись на третий этаж. Свеча, фартук, клятва — и вот вы среди братьев. Загляните во вкладку «Армия → 👁️ Ложи».'; }
     if (o === 1) { refuseLodge(g); return 'Письмо сгорело в камине. Через неделю на вашем столе появилось чёрное перо — просто напоминание.'; }
     banLodge(g); return 'Указ подписан. Полиция нашла пустой зал со свечами — братья успели уйти. Ложа это запомнит.';
   } },
@@ -351,6 +353,51 @@ const MAIL: MailDef[] = [
       sign: r === 3 ? `△ Братья ложи «${LODGE_NAME}»` : '△ Досточтимый мастер',
       gift: r === 1 ? { brains: brains(g) * 40, label: 'Ключ от тайной библиотеки' } : r === 2 ? { money: inc(g) * 40, label: 'Дар братьев-банкиров' } : { stab: 3, label: 'Тайная церемония' },
     };
+  } },
+  // своя ложа игрока: правитель сам просится в братья (см. order.ts)
+  { id: 'order_ask', follow: true, make: (g, vals) => {
+    const k = vals[0] ?? -1;
+    const O = g.order;
+    if (!O || !g.countries[k]?.alive || inOrder(g, k)) return null;
+    return {
+      from: `Посол страны ${cname(k)}`, icon: '🎩', subject: 'Просьба о посвящении', art: 'lodge', paper: 'lodge', stamp: O.emblem, seal: '#8a6a24',
+      body: [
+        `Досточтимый Великий мастер! Мой правитель наслышан о ложе «${O.name}» и о том, как братья ${O.members.length ? 'помогают друг другу' : 'держат слово'}.`,
+        `Он просит принять его в братство: обещает хранить тайну, платить взносы и никогда не поднимать меч на брата.`,
+        'Если согласны — назовите место и час. Свечу и фартук он принесёт свои.',
+      ],
+      sign: `С глубоким почтением, посол страны ${cname(k)}`,
+      replies: [
+        { label: 'Принять в ложу', hint: `${cname(k)} станет братом без денег и проверок: отношения +15, взносы — в нашу казну` },
+        { label: 'Отказать', hint: 'отношения −5, год он не будет проситься снова' },
+      ],
+    };
+  }, answer: (g, L, o) => {
+    const k = L.vals?.[0] ?? -1;
+    if (o === 0) {
+      const err = acceptAsk(g, k);
+      if (err) return err;
+      return `Посвящение прошло в полночь. Братьев в ложе «${g.order!.name}»: ${orderMembers(g).length}.`;
+    }
+    refuseAsk(g, k);
+    return 'Посол поклонился и ушёл, не сказав ни слова.';
+  } },
+  // ООН: Генсек приглашает к работе в Генассамблее (см. assembly.ts)
+  { id: 'un_welcome', story: true, when: (g) => g.day >= 45, make: (g) => ({
+    from: 'Генеральный секретарь ООН', icon: '🌐', subject: 'Мир ждёт вашего голоса', art: 'dove', paper: 'diplomatic', stamp: '🕊️', seal: '#1c7ed6',
+    body: [
+      `${hello(g)} От имени Организации Объединённых Наций поздравляю вас со вступлением в должность.`,
+      `Страна «${land(g)}» — полноправный член ООН. В Генеральной Ассамблее вы можете вносить резолюции: отправить миротворцев на чужую войну, осудить агрессора, попросить гуманитарной помощи, предложить ядерное разоружение или климатическое соглашение.`,
+      'Голосуют все страны, решает большинство. Раз в пять лет Ассамблея избирает Генерального секретаря — почему бы не вам? Всё это — во вкладке «Армия → 🌐 ООН».',
+    ],
+    sign: 'Генеральный секретарь ООН',
+    replies: [
+      { label: 'Пообещать поддержку миру', hint: 'отношения со всеми странами +2' },
+      { label: 'Ответить вежливо', hint: 'ничего не изменится' },
+    ],
+  }), answer: (g, _L, o) => {
+    if (o === 0) { relAll(g, 2); return 'Ваше письмо зачитали на Генассамблее. Аплодировали стоя.'; }
+    return 'Генсек ответил открыткой с голубем мира.';
   } },
 
   // ===== обычные =====

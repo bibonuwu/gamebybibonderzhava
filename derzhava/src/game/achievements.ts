@@ -1,7 +1,7 @@
 import { rating } from './debt';
 import { TECHS } from './defs';
 import { STATS } from './economy';
-import { banner, log, sfx } from './state';
+import { allBuildings, banner, log, sfx } from './state';
 import type { GameState } from './types';
 import { REGION_OF } from './world';
 
@@ -15,8 +15,15 @@ export interface AchievementDef {
 
 const me = (g: GameState) => g.countries[g.player];
 const st = (g: GameState) => STATS[g.player];
-const countOf = (g: GameState, type: string) =>
-  Object.entries(g.buildings).filter(([t, b]) => b.type === type && b.progress === 0 && g.regions[REGION_OF[+t]].owner === g.player).length;
+function countOf(g: GameState, type: string) {
+  let n = 0;
+  const { tiles, list } = allBuildings(g);
+  for (let k = 0; k < tiles.length; k++) {
+    const b = list[k];
+    if (b.type === type && b.progress === 0 && g.regions[REGION_OF[tiles[k]]].owner === g.player) n++;
+  }
+  return n;
+}
 const rankOf = (g: GameState, f: (i: number) => number) => {
   const mine = f(g.player);
   return g.countries.filter((c) => c.alive && f(c.idx) > mine).length + 1;
@@ -56,9 +63,15 @@ export const ACHIEVEMENTS: AchievementDef[] = [
   { id: 'voice10', icon: '📢', name: 'Слуга народа', desc: 'Ответьте на 10 требований народа', check: (g) => (g.counters.demands ?? 0) >= 10 },
   { id: 'atom1', icon: '☢️', name: 'Ядерная держава', desc: 'Проведите ядерное испытание', check: (g) => (g.counters.nukeTests ?? 0) >= 1 },
   { id: 'peaceatom', icon: '🕊️', name: 'Мирный атом', desc: 'Держите 5 боеголовок и ни разу не нажмите кнопку', check: (g) =>
-    (me(g).nukes ?? 0) >= 5 && !g.counters.nukesLaunched },
+    (me(g).nukes ?? 0) + (me(g).hbombs ?? 0) >= 5 && !g.counters.nukesLaunched },
+  { id: 'hbomb', icon: '💥', name: 'Царь-бомба', desc: 'Испытайте термоядерную бомбу', check: (g) => (g.counters.hbombTests ?? 0) >= 1 },
   { id: 'lodge1', icon: '🕯️', name: 'Посвящённый', desc: 'Вступите в тайную ложу', check: (g) => g.lodge.status === 'member' },
   { id: 'lodgegm', icon: '👁️', name: 'Великий мастер', desc: 'Возглавьте тайную ложу', check: (g) => g.lodge.status === 'member' && g.lodge.master === g.player },
+  { id: 'order1', icon: '📐', name: 'Основатель ордена', desc: 'Основайте свою ложу', check: (g) => (g.counters.orderFounded ?? 0) >= 1 },
+  { id: 'order7', icon: '🏛️', name: 'Тайное мировое правительство', desc: 'Семь стран в вашей ложе', check: (g) => (g.order?.members.filter((k) => g.countries[k].alive).length ?? 0) >= 7 },
+  { id: 'orderun', icon: '📜', name: 'Из тени — в ООН', desc: 'Зарегистрируйте свою ложу официально', check: (g) => (g.counters.orderOfficial ?? 0) >= 1 },
+  { id: 'sg', icon: '🌐', name: 'Генеральный секретарь', desc: 'Станьте Генсеком ООН', check: (g) => (g.counters.sgTerms ?? 0) >= 1 },
+  { id: 'unres3', icon: '🕊️', name: 'Голос мира', desc: 'Проведите через Генассамблею три своих резолюции', check: (g) => (g.counters.unResPassed ?? 0) >= 3 },
   { id: 'coup', icon: '🔥', name: 'Серый кардинал', desc: 'Устройте успешный переворот в чужой стране', check: (g) => (g.counters.coups ?? 0) >= 1 },
   { id: 'lodgeban', icon: '🚫', name: 'Охотник на масонов', desc: 'Запретите тайную ложу в своей стране', check: (g) => (g.counters.lodgeBanned ?? 0) >= 1 },
   { id: 'elect1', icon: '🗳️', name: 'Народный избранник', desc: 'Победите на выборах', check: (g) => (g.counters.electionsWon ?? 0) >= 1 },

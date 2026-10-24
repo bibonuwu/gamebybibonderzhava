@@ -1,3 +1,4 @@
+import { initAssembly } from './assembly';
 import { BASE_RATE } from './debt';
 import { initElections } from './elections';
 import { initLodge } from './lodge';
@@ -30,6 +31,7 @@ export function loadGame(): GameState | null {
     g.fallout ??= {};
     g.un ??= [];
     g.lodge ??= initLodge(g);
+    g.assembly ??= initAssembly(g);
     g.elections ??= initElections(g);
     g.intel ??= initIntel(g);
     g.finance ??= { base: BASE_RATE, shock: 0, nextCrisis: g.day + 1800 };
@@ -40,6 +42,14 @@ export function loadGame(): GameState | null {
     g.mailSeen ??= [];
     g.nextMailDay ??= g.day + 20;
     for (const c of g.countries) c.moneyScale ??= Math.max(30, c.lastGross);
+    // раньше термояд улучшал все боеголовки — теперь это отдельные бомбы
+    for (const c of g.countries) {
+      if (c.hbombs === undefined && c.nukes && c.techs.includes('thermonuclear')) {
+        c.hbombs = c.nukes;
+        c.nukes = 0;
+        c.hbombTested = true;
+      }
+    }
     initSociety(g, !g.market);
     return g;
   } catch {

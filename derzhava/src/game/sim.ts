@@ -1,5 +1,6 @@
 // Игровой тик: 1 секунда = 1 день.
 import { checkAchievements } from './achievements';
+import { tickAssembly } from './assembly';
 import { cname, enemiesOf, resolveBattle } from './actions';
 import { aiTurn, driftRelations, expireProposals } from './ai';
 import { BUILDINGS, GOVS } from './defs';
@@ -9,13 +10,14 @@ import { tickDebt } from './debt';
 import { tickElections } from './elections';
 import { tickLodge } from './lodge';
 import { tickNuclear } from './nuclear';
+import { tickOrder } from './order';
 import { tickMail } from './mail';
 import { tickMarket } from './market';
 import { triggerDemand } from './people';
 import { checkQuests } from './quests';
 import { tickSociety } from './society';
 import { tickSpy } from './spy';
-import { banner, fx, log, mapDirty, news, pick, sfx, toast } from './state';
+import { allBuildings, banner, fx, log, mapDirty, news, pick, sfx, toast } from './state';
 import type { GameState, GovType, Sample } from './types';
 import { tickUN } from './un';
 import { tickWonders } from './wonders';
@@ -53,17 +55,20 @@ export function tick(g: GameState) {
     r.pop = Math.max(1000, r.pop + REGION_DELTA[id]);
   });
 
-  for (const key in g.buildings) {
-    const b = g.buildings[+key];
+  const { tiles, list } = allBuildings(g);
+  for (let k = 0; k < tiles.length; k++) {
+    const b = list[k];
     if (b.progress <= 0) continue;
-    b.progress -= 1;
+    const tile = tiles[k];
+    const owner = g.regions[REGION_OF[tile]].owner;
+    b.progress -= owner >= 0 ? STATS[owner].buildSpeed : 1; // опытные строители работают быстрее
     if (b.progress <= 0) {
       b.progress = 0;
       mapDirty.buildings = true;
-      if (g.regions[REGION_OF[+key]].owner === g.player) {
+      if (owner === g.player) {
         sfx('done');
-        fx({ kind: 'float', tile: +key, text: b.level > 1 ? '⬆️' : '✅' });
-        toast(`✅ ${BUILDINGS[b.type].name}${b.level > 1 ? ` ур. ${b.level}` : ''} готов — ${REGIONS[REGION_OF[+key]].name}`, 'good');
+        fx({ kind: 'float', tile, text: b.level > 1 ? '⬆️' : '✅' });
+        toast(`✅ ${BUILDINGS[b.type].name}${b.level > 1 ? ` ур. ${b.level}` : ''} готов — ${REGIONS[REGION_OF[tile]].name}`, 'good');
       }
     }
   }
@@ -79,6 +84,8 @@ export function tick(g: GameState) {
   tickNuclear(g);
   tickUN(g);
   tickLodge(g);
+  tickOrder(g);
+  tickAssembly(g);
   tickDebt(g);
   tickSpy(g);
   tickElections(g);

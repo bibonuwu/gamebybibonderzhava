@@ -3,7 +3,7 @@ import {
   annex, annexCost, annexError, atWar, cancelTreaty, declareWar, demandTribute, DIPLO_NAME, diploError, gift, giftCost, maxTrade,
   peekPair, propose, reachableTargets, warError, type DiploKind,
 } from '../../game/actions';
-import { answerProposal, PROPOSAL_TEXT } from '../../game/ai';
+import { answerProposal, proposalText } from '../../game/ai';
 import { GOVS, PERSONALITIES, RELIGIONS } from '../../game/defs';
 import { STATS, tradeWith } from '../../game/economy';
 import { fmt, fmtDays } from '../../game/format';
@@ -13,7 +13,9 @@ import {
   aidCost, countriesN, embargoed, forecast, isAggressor, P5, playerAid, playerSanctions, sanctions, victimsOf, warJustice,
 } from '../../game/un';
 import { RATINGS, rating } from '../../game/debt';
+import { pending } from '../../game/assembly';
 import { brothers, visibleMembers } from '../../game/lodge';
+import { inOrder, invite, inviteCost, inviteError, joinChance } from '../../game/order';
 import { dossier, netOf, watched } from '../../game/spy';
 import { WONDER_BY_ID, wondersOf } from '../../game/wonders';
 import { COUNTRY_DEFS, REGIONS } from '../../game/world';
@@ -38,7 +40,7 @@ export function DiploPanel({ map }: { map: MapView }) {
           {g.proposals.map((p) => <ProposalRow key={p.id} id={p.id} />)}
         </Card>
       )}
-      <UNCard />
+      <UNLink />
       <Treaties />
       <Card title="🌍 Страны мира" hint="Нажмите на страну, чтобы предложить договор, сделать подарок или объявить войну. Полоска справа — отношения с вами.">
         {others.map((c) => {
@@ -61,6 +63,7 @@ export function DiploPanel({ map }: { map: MapView }) {
                   {isAggressor(g, c.idx) && <span class="chip war" title="Напала на другую страну без причины — ООН её осудила">🌐 агрессор</span>}
                   {sanctions(g, me, c.idx) && <span class="chip">🚫 наши санкции</span>}
                   {masons.has(c.idx) && <LodgeChip id={c.idx} />}
+                  {inOrder(g, c.idx) && <OrderChip />}
                 </div>
               </div>
               <div style={{ textAlign: 'right' }}>
@@ -95,7 +98,7 @@ export function ProposalRow({ id }: { id: number }) {
     <div class="list-item">
       <Flag id={p.from} />
       <div class="grow">
-        <b>{COUNTRY_DEFS[p.from].name}</b> {PROPOSAL_TEXT[p.kind]}
+        <b>{COUNTRY_DEFS[p.from].name}</b> {proposalText(p)}
         {p.kind === 'tribute' && <> — <b>{fmt(p.amount ?? 0)} 💰</b></>}
         {p.kind === 'peace' && !!p.amount && <> за контрибуцию <b>{fmt(p.amount)} 💰</b></>}
         <div class="small muted">ответ нужен в течение {Math.ceil(p.expires - g.day)} дн.</div>
@@ -136,6 +139,7 @@ export function CountryDialog({ id }: { id: number }) {
       {visibleMembers(g).includes(id) && (
         <p class="small" style={{ marginTop: '-6px' }}><LodgeChip id={id} /></p>
       )}
+      {inOrder(g, id) && <p class="small" style={{ marginTop: '-6px' }}><OrderChip /></p>}
       {isAggressor(g, id) && (
         <p class="small down" style={{ marginTop: '-6px' }}>
           🌐 Агрессор: напала на {victimsOf(g, id).map((v) => COUNTRY_DEFS[v].name).join(', ')}{s.sanctions > 0 && ` · санкции −${Math.round(s.sanctions * 100)}% производства`}
@@ -208,6 +212,16 @@ export function CountryDialog({ id }: { id: number }) {
             {warJustice(g, me, id).just ? `✅ Справедливая война: ${warJustice(g, me, id).reason}` : '⚠️ Без причины это агрессия — ООН осудит нас'}
           </div>
         )}
+        {g.order && !inOrder(g, id) && (
+          <button class="btn ghost block" disabled={!!inviteError(g, id)} title={inviteError(g, id) ?? undefined} onClick={() => {
+            const err = invite(g, id);
+            if (err) return report(err);
+            toast(inOrder(g, id) ? `${g.order!.emblem} ${COUNTRY_DEFS[id].name} — наш брат!` : `🚪 ${COUNTRY_DEFS[id].name} отказалась от посвящения`, inOrder(g, id) ? 'good' : 'bad');
+            emit();
+          }}>
+            {g.order.emblem} Позвать в ложу · шанс {Math.round(joinChance(g, id) * 100)}% · 💰 {fmt(inviteCost(g))}
+          </button>
+        )}
         <button class="btn ghost block" onClick={() => setUI({ modal: null, tab: 'army', armyTab: 'spy', spyTarget: id })}>
           🕵️ Разведка{netOf(g, me, id) >= 1 ? ` · сеть агентов ${Math.round(netOf(g, me, id))}%` : ''}
         </button>
@@ -223,6 +237,34 @@ function LodgeChip({ id }: { id: number }) {
   const master = g.lodge.master === id;
   if (brothers(g, g.player, id)) return <span class="chip lodge" title="Брат по тайной ложе: не нападёт на нас и охотнее подпишет договор">👁️ {master ? 'Великий мастер' : 'брат по ложе'}</span>;
   return <span class="chip lodge" title="Газеты раскрыли: член тайной ложи">👁️ масон</span>;
+}
+
+/** Метка брата нашей ложи. */
+function OrderChip() {
+  const g = getGame()!;
+  return <span class="chip lodge" title={`Брат нашей ложи «${g.order!.name}»: не нападёт на нас, платит взносы`}>{g.order!.emblem} наш брат</span>;
+}
+
+/** ООН — теперь своя вкладка; здесь — короткая сводка и переход. */
+function UNLink() {
+  const g = getGame()!;
+  const me = g.player;
+  const cases = g.un.filter((cs) => cs.until === undefined);
+  const votes = pending(g).filter((r) => r.by !== me && !r.myVote).length;
+  const ours = cases.some((cs) => cs.aggressor === me || cs.victim === me);
+  if (!cases.length && !votes) return null;
+  return (
+    <div class={`list-item tap un-link ${ours ? 'hot' : ''}`} onClick={() => setUI({ armyTab: 'un' })}>
+      <span class="big-ic">🌐</span>
+      <div class="grow">
+        <b>ООН</b>
+        <div class="small muted">
+          {cases.length ? `дел об агрессии: ${cases.length}${ours ? ' (и наше)' : ''}` : ''}{cases.length && votes ? ' · ' : ''}{votes ? `ждут нашего голоса: ${votes}` : ''}
+        </div>
+      </div>
+      <span class="muted">›</span>
+    </div>
+  );
 }
 
 const many = (n: number, one: string, more: string) => (n % 10 === 1 && n % 100 !== 11 ? one : more);
@@ -246,7 +288,7 @@ function warWarning(g: GameState, id: number): string {
 }
 
 /** ООН: дела об агрессии — кто напал, что решил Совбез, кто помогает жертве. Со стороны можно помочь. */
-function UNCard() {
+export function UNCard() {
   const g = getGame()!;
   const me = g.player;
   if (!g.un.length) return null;

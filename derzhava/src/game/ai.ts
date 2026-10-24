@@ -1,10 +1,10 @@
 // Поведение ботов: оценка угроз, экономика, наука, армия, война, дипломатия и предложения игроку,
 // а ещё — рынок (еда, оружие, учёные), компании и ответы своему народу.
 import {
-  addRel, alliesOf, annex, annexCost, armyLimit, atWar, availableTechs, bestTileFor, buildCost, cancelTreaty, cname,
+  addRel, alliesOf, annex, annexCost, armyLimit, atWar, availableTechs, bestTileFor, buildCost, builderCost, builderError, cancelTreaty, cname,
   declareWar, demandTribute, disband, enemiesOf, fundamentalCost, gift, giftCost, launchAttack, makePeace,
   neighborCountries, peaceScore, peekPair, PLAYER_GRACE, propose, reachableTargets, recruit, recruitCost, research,
-  researchFundamental, seaReach, sharedFoe, sign, soldiersFor, startBuild, startUpgrade, techCost, upgradeError,
+  researchFundamental, seaReach, sharedFoe, sign, soldiersFor, startBuild, startUpgrade, techCost, upgradeBuilders, upgradeError,
   warError, willAccept, type DiploKind,
 } from './actions';
 import {
@@ -15,13 +15,14 @@ import { fmt } from './format';
 import { buyArms, buyQuote, maxBuy, sellArms } from './market';
 import { botDebt } from './debt';
 import { brothers } from './lodge';
+import { orderBrothers } from './order';
 import { aiNuclear, BOMB_TECH, isNuclear } from './nuclear';
 import { botPeople } from './people';
 import {
   buyCompany, buyCompanyError, companyPrice, foundCompany, foundCost, foundError, geniusError, geniusPrice, grantCost, grantError,
   hireGenius, hireScientists, inviteInvestors, investorsCost, investorsError, richTax, richTaxError, sciGrant, sciPrice,
 } from './society';
-import { log, news, pick, rand, sfx } from './state';
+import { allBuildings, log, news, pick, rand, sfx } from './state';
 import type { BudgetKey, BuildingType, Company, GameState, Genius, GovType, Proposal, ReligionPolicy, Sector } from './types';
 import { botSpy } from './spy';
 import { fearsUN, sanctions, victimsOf } from './un';
@@ -265,9 +266,10 @@ export function bestBuildOption(g: GameState, i: number, type: BuildingType, car
     best = { tile, cost, upgrade: false };
   }
   if (!careful && best) return best;
-  for (const key in g.buildings) {
-    const t = +key;
-    const b = g.buildings[t];
+  const { tiles, list } = allBuildings(g);
+  for (let k = 0; k < tiles.length; k++) {
+    const t = tiles[k];
+    const b = list[k];
     if (b.type !== type || g.regions[REGION_OF[t]].owner !== i || upgradeError(g, i, t)) continue;
     const rid = REGION_OF[t];
     const w = regionWeight(g.regions[rid].pop);
@@ -282,6 +284,9 @@ export function bestBuildOption(g: GameState, i: number, type: BuildingType, car
 }
 
 function doConstruction(g: GameState, i: number, th: Threat) {
+  // все площадки заняты, а денег с запасом — нанимаем строителей получше
+  if (STATS[i].constructing >= STATS[i].slots && !th.enemies.length && !builderError(g, i)
+    && g.countries[i].money > builderCost(g, i) * 4 && rand(g) < 0.1) upgradeBuilders(g, i);
   for (let k = 0; k < 2; k++) {
     const c = g.countries[i];
     const s = STATS[i];
@@ -444,7 +449,7 @@ function warScore(g: GameState, i: number, j: number, leader: number, breakPact:
   // ядерное сдерживание: на ядерную державу нападают неохотно
   if (isNuclear(g, j)) ratio /= isNuclear(g, i) ? 1.4 : 2.5;
   const rel = g.rel[i][j];
-  if (brothers(g, i, j) && rel > -60) return 0; // брат на брата не идёт
+  if ((brothers(g, i, j) || orderBrothers(g, i, j)) && rel > -60) return 0; // брат на брата не идёт
   let [need, relMax] = WAR_NEED[c.personality] ?? [2, -50];
   if (c.personality === 'fanatic' && g.countries[j].religion === c.religion) relMax = -40;
   if (j === leader && busy > 0) {
@@ -687,13 +692,29 @@ export function offer(g: GameState, from: number, kind: Proposal['kind'], amount
   sfx('notify');
 }
 
-export const PROPOSAL_TEXT: Record<Proposal['kind'], string> = {
-  trade: 'предлагает торговый договор',
-  pact: 'предлагает пакт о ненападении',
-  alliance: 'предлагает военный союз',
-  peace: 'предлагает заключить мир',
-  tribute: 'требует дань',
+const PROPOSAL_TEXT: Record<Proposal['kind'], string[]> = {
+  trade: [
+    'предлагает торговый договор', 'хочет открыть свои рынки для наших товаров', 'зовёт подписать договор о свободной торговле',
+    'предлагает обмениваться товарами без пошлин', 'приглашает наших купцов в свои порты',
+  ],
+  pact: [
+    'предлагает пакт о ненападении', 'обещает никогда не нападать — если мы пообещаем то же', 'хочет закрепить мир на границе договором',
+    'предлагает подписать «вечный мир» между нашими странами',
+  ],
+  alliance: [
+    'предлагает военный союз', 'зовёт стоять плечом к плечу против любых врагов', 'предлагает объединить армии в союз',
+    'хочет союза: «враг одного — враг обоих»',
+  ],
+  peace: [
+    'предлагает заключить мир', 'просит перемирия: война всех измотала', 'присылает парламентёров с белым флагом',
+    'предлагает сложить оружие и подписать мир',
+  ],
+  tribute: [
+    'требует дань', 'грозит войной, если мы не заплатим', 'присылает ультиматум: платите — или ждите армию',
+  ],
 };
+/** Как звучит предложение бота: у каждого — своя формулировка. */
+export const proposalText = (p: Proposal) => PROPOSAL_TEXT[p.kind][p.id % PROPOSAL_TEXT[p.kind].length];
 
 export function answerProposal(g: GameState, id: number, accept: boolean) {
   const pr = g.proposals.find((p) => p.id === id);
@@ -756,6 +777,7 @@ export function driftRelations(g: GameState) {
   const enemies = g.countries.map((c, i) => (c.alive ? enemiesOf(g, i) : []));
   const lodge = new Set(g.lodge.members);
   const banned = g.lodge.status === 'banned';
+  const order = new Set(g.order ? [g.player, ...g.order.members] : []); // своя ложа игрока: мастер и братья
   for (let a = 0; a < n; a++) {
     const ca = g.countries[a];
     if (!ca.alive) continue;
@@ -780,7 +802,7 @@ export function driftRelations(g: GameState) {
       if (enemies[a].some((k) => enemies[b].includes(k))) base += 12;
       if (borders[a].has(b)) base -= 6;
       // братья по ложе дружат, а запретившего ложу братья недолюбливают
-      if (lodge.has(a) && lodge.has(b)) base += 12;
+      if ((lodge.has(a) && lodge.has(b)) || (order.has(a) && order.has(b))) base += 12;
       else if (banned && ((a === g.player && lodge.has(b)) || (b === g.player && lodge.has(a)))) base -= 10;
       for (const x of [ca, cb]) {
         if (x.personality === 'trader') base += 8;

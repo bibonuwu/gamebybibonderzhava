@@ -68,9 +68,11 @@ export interface Country {
   foodReserve: number; // сколько дней потребления держать в запасе
   foodAuto: boolean; // автоторговля излишками и дефицитом
   arms: number; // комплекты вооружения на складах и в войсках
-  nukes?: number; // готовые ядерные боеголовки
-  nukeBuild?: { left: number; total: number }; // сборка боеголовки
+  nukes?: number; // готовые атомные боеголовки
+  hbombs?: number; // готовые термоядерные бомбы
+  nukeBuild?: { left: number; total: number; thermo?: boolean }; // сборка боеголовки (thermo — термоядерной бомбы)
   nukeTested?: boolean; // первое испытание проведено
+  hbombTested?: boolean; // первое термоядерное испытание проведено
   // госдолг (debt.ts)
   debt?: number; // облигации на рынке
   debtRate?: number; // годовая ставка по ним — от кредитного рейтинга
@@ -79,6 +81,7 @@ export interface Country {
   imfBan?: number; // до этого дня МВФ не даёт денег
   imfBroken?: number; // до этого дня рейтинг ниже: страна сорвала программу МВФ
   counterIntel?: number; // контрразведка 0…3 (spy.ts)
+  builders?: number; // уровень строителей 1…10 (actions.ts): места для стройки и её скорость
   aiFlags: {
     reformed?: boolean; lastWarDay?: number; lastProposalDay?: number; lastAnnex?: number; nextAttack?: number;
     prepTarget?: number; prepUntil?: number; // подготовка к войне: закупки и мобилизация
@@ -311,6 +314,48 @@ export interface LodgeState {
   nextPlot: number; // тайные дела ботов-братьев и происки ложи против тех, кто её запретил
 }
 
+/** Своя ложа игрока (order.ts): игрок — основатель и бессменный Великий мастер. */
+export interface OrderState {
+  name: string;
+  emblem: string; // эмодзи-герб
+  founded: number;
+  members: number[]; // братья-боты (игрок — мастер, в списке его нет)
+  inf: number; // 🔺 влияние ложи — на волю мастера
+  official?: number; // день официальной регистрации: статус наблюдателя ООН
+  cd: Record<string, number>; // действие → день, когда снова можно
+  refused: Record<number, number>; // страна → до какого дня с ней не заговаривать о посвящении
+  nextAsk: number; // когда кто-то из правителей сам попросится в ложу
+}
+
+export type GAVote = 'yes' | 'no' | 'abstain';
+
+/** Резолюция Генеральной Ассамблеи ООН (assembly.ts). */
+export interface UNResolution {
+  id: number;
+  kind: string;
+  by: number; // кто внёс
+  target?: number; // страна, о которой резолюция
+  target2?: number; // вторая сторона войны (миротворцы)
+  day: number; // внесена
+  vote: number; // день голосования
+  myVote?: GAVote; // голос игрока
+  yes?: number[]; // итог: кто «за»
+  no?: number[];
+  passed?: boolean;
+}
+
+/** ООН как организация: Генсек и Генассамблея. Дела об агрессии и Совбез — в g.un (un.ts). */
+export interface AssemblyState {
+  sg: number; // Генеральный секретарь — страна (-1 — нет)
+  sgSince: number;
+  nextSG: number; // день выборов Генсека
+  sgAsked?: boolean; // окно выборов показано игроку
+  campaign?: boolean; // игрок провёл дипломатическую кампанию перед выборами
+  res: UNResolution[]; // на голосовании и недавние, свежие — первыми
+  cd: Record<string, number>; // вид резолюции → день, когда игрок снова может внести такую
+  nextBot: number; // когда боты внесут свою резолюцию
+}
+
 export interface PendingEvent {
   id: string;
   kind?: 'demand' | 'un' | 'lodge' | 'election' | 'debt'; // требование народа, Совбез ООН, тайная ложа, выборы или финансы, а не случайное событие
@@ -378,6 +423,7 @@ export interface GameState {
   difficulty: Difficulty;
   countries: Country[];
   regions: RegionState[];
+  /** Клетка → здание. Ставить и сносить — только putBuilding / removeBuilding (state.ts), обходить — allBuildings. */
   buildings: Record<number, Building>;
   rel: number[][];
   pairs: Record<string, PairState>;
@@ -386,6 +432,8 @@ export interface GameState {
   fallout: Record<number, number>; // регион → день, до которого держится радиоактивное заражение
   un: UNCase[]; // дела ООН об агрессии
   lodge: LodgeState; // тайная ложа
+  order?: OrderState; // своя ложа игрока (нет — не основана)
+  assembly: AssemblyState; // ООН: Генсек и Генассамблея
   elections: ElectionState; // выборы игрока
   intel: IntelState; // разведка
   finance: FinanceState; // мировые финансы
@@ -405,6 +453,8 @@ export interface GameState {
   geniuses: Genius[];
   market: MarketState;
   nextDemandDay: number;
+  recentDemands?: string[]; // последние требования народа — чтобы не повторялись (people.ts)
+  recentEvents?: string[]; // последние случайные события (events.ts)
   counters: Record<string, number>;
   hist: { s: Sample[]; m: Sample[]; l: Sample[] };
   rng: number;

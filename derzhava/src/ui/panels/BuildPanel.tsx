@@ -1,6 +1,8 @@
-import { bestTileFor, buildCost, startBuild, startUpgrade, upgradeError } from '../../game/actions';
+import {
+  bestTileFor, buildCost, builderCost, builderError, builderLevel, startBuild, startUpgrade, upgradeBuilders, upgradeError,
+} from '../../game/actions';
 import { advise, applyAdvice, applyAllAdvice, GAIN, GOOD, optionFor, sectors, WEAK } from '../../game/advisor';
-import { BUILDINGS, BUILDING_TYPES, TECH_BY_ID } from '../../game/defs';
+import { BUILDER_NAMES, BUILDER_SPEED, BUILDERS_MAX, BUILDINGS, BUILDING_TYPES, TECH_BY_ID } from '../../game/defs';
 import { STATS } from '../../game/economy';
 import { fmt } from '../../game/format';
 import { emit, getGame } from '../../game/state';
@@ -38,13 +40,14 @@ export function BuildPanel({ map }: { map: MapView }) {
     <>
       <PanelHero kind="build" />
       <Advisor show={show} />
+      <Builders />
       <Card title="🔨 Строится" sub={`${s.constructing} / ${s.slots} мест`}>
         {building.length === 0 && <div class="small muted">Сейчас ничего не строится.</div>}
         {building.map(({ tile, b }) => (
           <div class="list-item tap" key={tile} onClick={() => show(tile)}>
             <span class="big-ic">{BUILDINGS[b.type].icon}</span>
             <div class="grow">
-              <div class="row between"><b>{BUILDINGS[b.type].name} ур. {b.level}</b><span class="small muted">{Math.ceil(b.progress)} сек</span></div>
+              <div class="row between"><b>{BUILDINGS[b.type].name} ур. {b.level}</b><span class="small muted">{Math.ceil(b.progress / s.buildSpeed)} сек</span></div>
               <div class="small muted">{REGIONS[REGION_OF[tile]].name}</div>
               <Bar value={1 - b.progress / b.total} />
             </div>
@@ -96,6 +99,53 @@ export function BuildPanel({ map }: { map: MapView }) {
         ))}
       </Card>
     </>
+  );
+}
+
+/** Строители: уровень 1…10, каждый — ещё одна стройплощадка и стройка быстрее. */
+function Builders() {
+  const g = getGame()!;
+  const me = g.player;
+  const c = g.countries[me];
+  const s = STATS[me];
+  const lvl = builderLevel(g, me);
+  const max = lvl >= BUILDERS_MAX;
+  const cost = builderCost(g, me);
+  const err = builderError(g, me);
+  const speed = (l: number) => Math.round(BUILDER_SPEED * (l - 1) * 100);
+  return (
+    <Card title="👷 Строители" sub={`ур. ${lvl} из ${BUILDERS_MAX}`}
+      hint="Каждый новый уровень строителей даёт ещё одно место для стройки и ускоряет все стройки на 6%. Технологии и чудеса света добавляют места сверху.">
+      <div class={`crew ${max ? 'max' : ''}`}>
+        <div class="crew-head">
+          <span class="crew-badge" key={lvl}><b>{lvl}</b></span>
+          <div class="grow">
+            <div class="crew-name">{BUILDER_NAMES[lvl]}</div>
+            <div class="small muted">мест для стройки: <b class="up">{s.slots}</b> · скорость: <b class="up">+{speed(lvl)}%</b></div>
+          </div>
+        </div>
+        <div class="crew-track" aria-label={`Уровень ${lvl} из ${BUILDERS_MAX}`}>
+          {Array.from({ length: BUILDERS_MAX }, (_, i) => (
+            <i key={i} class={i < lvl ? 'on' : i === lvl ? 'next' : ''} style={{ animationDelay: `${i * 0.04}s` }}>{i < lvl ? '👷' : i + 1}</i>
+          ))}
+        </div>
+        {max ? (
+          <div class="crew-done">🏆 Лучшие строители в мире — {BUILDER_NAMES[lvl]}</div>
+        ) : (
+          <div class="crew-next">
+            <div class="grow small">
+              <div>Дальше: <b>{BUILDER_NAMES[lvl + 1]}</b></div>
+              <div class="muted">места {s.slots} → <b class="up">{s.slots + 1}</b> · скорость +{speed(lvl)}% → <b class="up">+{speed(lvl + 1)}%</b></div>
+            </div>
+            <button class="btn sm shine" disabled={!!err} title={err ?? undefined}
+              onClick={() => report(upgradeBuilders(g, me), `👷 ${BUILDER_NAMES[lvl + 1]}: мест для стройки — ${STATS[me].slots}`)}>
+              ⬆️ 💰 {fmt(cost)}
+            </button>
+          </div>
+        )}
+        {!max && c.money < cost && <div class="small muted" style={{ marginTop: '4px' }}>Не хватает {fmt(cost - c.money)} 💰</div>}
+      </div>
+    </Card>
   );
 }
 

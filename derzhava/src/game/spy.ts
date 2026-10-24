@@ -7,7 +7,7 @@ import { addRel, cname, enemiesOf, pair } from './actions';
 import { BUILDINGS, INTEL_COST, TECH_BY_ID } from './defs';
 import { computeAll, STATS } from './economy';
 import { fmt } from './format';
-import { fx, log, mapDirty, news, pick, rand, sfx } from './state';
+import { allBuildings, fx, log, mapDirty, news, pick, rand, removeBuilding, sfx } from './state';
 import type { BuildingType, GameState, IntelState, Personality } from './types';
 import { COUNTRY_DEFS, REGIONS, REGION_OF } from './world';
 
@@ -91,10 +91,11 @@ function stealable(g: GameState, a: number, b: number) {
 const SAB_TYPES: BuildingType[] = ['factory', 'port', 'university', 'barracks'];
 function sabTargets(g: GameState, b: number) {
   const out: number[] = [];
-  for (const key in g.buildings) {
-    const bl = g.buildings[+key];
+  const { tiles, list } = allBuildings(g);
+  for (let k = 0; k < tiles.length; k++) {
+    const bl = list[k];
     if (bl.progress > 0 || !SAB_TYPES.includes(bl.type)) continue;
-    if (g.regions[REGION_OF[+key]].owner === b) out.push(+key);
+    if (g.regions[REGION_OF[tiles[k]]].owner === b) out.push(tiles[k]);
   }
   return out;
 }
@@ -133,7 +134,7 @@ export const SPY_OPS: SpyOp[] = [
       const tile = pick(g, sabTargets(g, b));
       const bl = g.buildings[tile];
       const broken = bl.level <= 1;
-      if (broken) delete g.buildings[tile];
+      if (broken) removeBuilding(g, tile);
       else bl.level--;
       g.countries[b].arms *= 0.9;
       mapDirty.buildings = true;
@@ -336,7 +337,7 @@ export function dossier(g: GameState, b: number): [string, string][] {
   const c = g.countries[b];
   const out: [string, string][] = [
     ['💰 Казна', fmt(c.money)],
-    ['☢️ Боеголовок', String(c.nukes ?? 0)],
+    ['☢️ Боеголовок', c.hbombs ? `${c.nukes ?? 0} + 💥${c.hbombs} термоядерных` : String(c.nukes ?? 0)],
     ['🧑‍🔬 Звёзд науки', String(g.geniuses.filter((x) => x.employer === b).length)],
     ['🛡️ Контрразведка', INTEL_LEVELS[c.counterIntel ?? BOT_INTEL[c.personality]]],
     ['🕵️ Их сеть у нас', `${Math.round(netOf(g, b, g.player))}%`],

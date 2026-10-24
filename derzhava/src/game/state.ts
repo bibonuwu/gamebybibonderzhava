@@ -1,5 +1,5 @@
 // Текущая партия, подписки интерфейса, уведомления.
-import type { GameState, LogEntry } from './types';
+import type { Building, GameState, LogEntry } from './types';
 
 let current: GameState | null = null;
 export const getGame = () => current;
@@ -140,6 +140,31 @@ export function fx(e: MapFx) {
 
 /** Флаг: территория изменилась — карте нужно перерисовать границы. */
 export const mapDirty = { territory: true, buildings: true };
+
+// ---------- здания: быстрый обход ----------
+// for…in по g.buildings на тысячах зданий медленный (каждый ключ — строка), а здания обходят много раз за день.
+// Поэтому держим готовый список клеток по возрастанию — в том же порядке, что и for…in, — и пересобираем его,
+// только когда здание появилось или исчезло. Ставить и сносить здания — только через putBuilding / removeBuilding.
+let indexed: GameState['buildings'] | null = null;
+const index = { tiles: [] as number[], list: [] as Building[] };
+
+/** Все здания: tiles[k] — клетка, list[k] — здание на ней. Внутри обхода здания не ставить и не сносить. */
+export function allBuildings(g: GameState): { readonly tiles: readonly number[]; readonly list: readonly Building[] } {
+  if (indexed !== g.buildings) {
+    indexed = g.buildings;
+    index.tiles = Object.keys(g.buildings).map(Number);
+    index.list = index.tiles.map((t) => g.buildings[t]);
+  }
+  return index;
+}
+export function putBuilding(g: GameState, tile: number, b: Building) {
+  g.buildings[tile] = b;
+  indexed = null;
+}
+export function removeBuilding(g: GameState, tile: number) {
+  delete g.buildings[tile];
+  indexed = null;
+}
 
 export function rand(g: GameState): number {
   g.rng = (g.rng + 0x6d2b79f5) | 0;

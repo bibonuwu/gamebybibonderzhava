@@ -3,7 +3,7 @@ import { armyLimit, atWar, availableTechs, enemiesOf, maxTrade, reachableTargets
 import { BUILDINGS } from './defs';
 import { STATS } from './economy';
 import { fmt } from './format';
-import { banner, log, pick, rand, sfx } from './state';
+import { allBuildings, banner, log, pick, rand, sfx } from './state';
 import type { BuildingType, GameState, Quest } from './types';
 import { foundCost } from './society';
 import { WONDERS, wondersOf } from './wonders';
@@ -23,11 +23,12 @@ const me = (g: GameState) => g.countries[g.player];
 const st = (g: GameState) => STATS[g.player];
 function built(g: GameState, type?: BuildingType, minLevel = 1) {
   let n = 0;
-  for (const key in g.buildings) {
-    const b = g.buildings[+key];
+  const { tiles, list } = allBuildings(g);
+  for (let k = 0; k < tiles.length; k++) {
+    const b = list[k];
     if (b.progress > 0 && b.level <= minLevel) continue;
     if ((type && b.type !== type) || b.level < minLevel) continue;
-    if (g.regions[REGION_OF[+key]].owner === g.player) n++;
+    if (g.regions[REGION_OF[tiles[k]]].owner === g.player) n++;
   }
   return n;
 }
