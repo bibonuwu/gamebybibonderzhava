@@ -1,16 +1,18 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { DIFFICULTY, GOVS } from '../game/defs';
-import { fmt, fmtDate } from '../game/format';
+import { fmt } from '../game/format';
 import { newGame } from '../game/newGame';
-import { hasSave, loadGame } from '../game/save';
+import { allSlots, setActiveSlot, trashInfo, writeSlot } from '../game/save';
+import { blocName, blocOf, SCENARIO_KEYS, SCENARIOS } from '../game/scenarios';
 import { getGame, setGame } from '../game/state';
-import type { Difficulty, GameState } from '../game/types';
+import type { Difficulty, GameState, Scenario } from '../game/types';
 import { COUNTRY_DEFS, REGIONS, REGION_OF, isWater } from '../game/world';
 import type { MapView } from '../map/MapView';
 import { Card, Flag, Seg, Tabs } from './common';
 import { PanelFrame, trackTab } from './PanelFrame';
 import { PanelHero } from './PanelHero';
 import { AudioSettings } from './AudioSettings';
+import { defaultTarget, SaveSlots } from './Saves';
 import { useHotkeys } from './Controls';
 import { MailButton } from './Mail';
 import { Banners, Modals, ProposalCard, QuestButton, Toasts } from './Modals';
@@ -49,6 +51,7 @@ export function App({ map }: { map: MapView }) {
   });
   map.fancy = prefs.fx;
   const g = getGame();
+  map.setActive(!g || ui.tab === 'map');
   if (!g) return <StartScreen map={map} />;
   trackTab(ui.tab);
   return (
@@ -107,7 +110,10 @@ function WarAndPeace({ map }: { map: MapView }) {
   );
 }
 
-function begin(map: MapView, g: GameState) {
+/** fresh — новая партия: записываем её в слот сразу (прежнее содержимое слота — в корзину). */
+function begin(map: MapView, g: GameState, slot: number, fresh: boolean) {
+  if (fresh) writeSlot(slot, g);
+  else setActiveSlot(slot);
   setGame(g);
   map.setGame(g);
   map.focusTile(REGIONS[g.countries[g.player].capital].center, 1.4, prefs.fx);
@@ -151,8 +157,12 @@ function StartScreen({ map }: { map: MapView }) {
   const sorted = useMemo(() => COUNTRY_DEFS.map((c, i) => ({ c, i })).sort((a, b) => a.c.name.localeCompare(b.c.name, 'ru')), []);
   const [sel, setSel] = useState(COUNTRY_DEFS.findIndex((c) => c.id === 'ru'));
   const [diff, setDiff] = useState<Difficulty>('normal');
+  const [scenario, setScenario] = useState<Scenario>('classic');
   const [leaving, setLeaving] = useState(false);
-  const saved = useMemo(() => (hasSave() ? loadGame() : null), []);
+  const [slots, setSlots] = useState(allSlots);
+  const [target, setTarget] = useState(() => defaultTarget(slots));
+  const showSaves = slots.some((s) => s.raw) || !!trashInfo();
+  const occupied = !!slots.find((s) => s.slot === target)?.raw;
   useEffect(() => {
     startPick = setSel;
     return () => { startPick = null; };
@@ -162,10 +172,10 @@ function StartScreen({ map }: { map: MapView }) {
   }, [sel]);
   const d = COUNTRY_DEFS[sel];
   const regions = REGIONS.filter((r) => r.origOwner === sel).length;
-  const go = (g: GameState) => {
+  const go = (g: GameState, slot: number, fresh: boolean) => {
     if (leaving) return;
     setLeaving(true);
-    setTimeout(() => begin(map, g), prefs.fx ? 450 : 0);
+    setTimeout(() => begin(map, g, slot, fresh), prefs.fx ? 450 : 0);
   };
   const stats: [string, string, number, string][] = [
     ['👥', 'Население', POP(d.pop), fmt(d.pop * 1e6)],
@@ -186,17 +196,8 @@ function StartScreen({ map }: { map: MapView }) {
           <div class="logo">ДЕРЖАВА</div>
           <div class="tagline">Возьмите страну в свои руки. Мир не будет ждать.</div>
         </div>
-        {saved && (
-          <Card title="💾 Продолжить правление">
-            <div class="row">
-              <Flag id={saved.player} />
-              <div class="grow">
-                <b>{COUNTRY_DEFS[saved.player].name}</b>
-                <div class="small muted">{fmtDate(saved.day)} · {DIFFICULTY[saved.difficulty].name} сложность</div>
-              </div>
-              <button class="btn shine" onClick={() => go(saved)}>▶ Играть</button>
-            </div>
-          </Card>
+        {showSaves && (
+          <SaveSlots slots={slots} target={target} setTarget={setTarget} onPlay={(g, k) => go(g, k, false)} refresh={() => setSlots(allSlots())} />
         )}
         <Card title="🌍 Новая игра" sub="выберите страну">
           <div class="country-grid">
@@ -230,10 +231,19 @@ function StartScreen({ map }: { map: MapView }) {
           <div class="small muted" style={{ marginBottom: '6px' }}>Сложность ботов</div>
           <Seg value={diff} onChange={setDiff} options={(Object.keys(DIFFICULTY) as Difficulty[]).map((k) => ({ v: k, label: DIFFICULTY[k].name }))} />
           <div class="small muted diff-hint" key={diff}>{DIFF_HINT[diff]}</div>
-          <button class="btn block shine start-go" onClick={() => go(newGame(sel, diff))}>
+          <div class="small muted" style={{ margin: '10px 0 6px' }}>Сценарий</div>
+          <Seg value={scenario} onChange={setScenario} options={SCENARIO_KEYS.map((k) => ({ v: k, label: `${SCENARIOS[k].icon} ${SCENARIOS[k].short}` }))} />
+          <div class="small muted diff-hint" key={scenario}>
+            {SCENARIOS[scenario].desc}{scenario === 'coldwar' && ` ${d.name}: ${blocName(blocOf(sel)).toLowerCase()}.`}
+          </div>
+          <button class="btn block shine start-go" onClick={() => go(newGame(sel, diff, Date.now(), scenario), target, true)}>
             👑 Принять власть
           </button>
-          {saved && <div class="small muted" style={{ marginTop: '6px', textAlign: 'center' }}>Новая игра заменит текущее сохранение.</div>}
+          {showSaves && (
+            <div class="small muted" style={{ marginTop: '6px', textAlign: 'center' }}>
+              Запишется в слот {target}{occupied ? ' — прежнее сохранение уйдёт в корзину' : ''}.
+            </div>
+          )}
         </div>
         <Card title="📖 Как играть" fold="start-howto">
           <div class="small col" style={{ gap: '4px' }}>

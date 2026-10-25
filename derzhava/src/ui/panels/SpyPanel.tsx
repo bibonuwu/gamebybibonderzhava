@@ -5,8 +5,9 @@ import {
   counterOf, detected, dossier, INTEL_LEVELS, netOf, plant, plantCost, plantError, setCounterIntel, SPY_OPS, spyChance, spyCost,
   spyError, spyRun, sweep, sweepCost, sweepError, watched, type SpyOp,
 } from '../../game/spy';
+import { proxyCost, proxyError, proxyFee, proxyTarget, PROXY_NET, sponsorRebels } from '../../game/rebels';
 import { emit, getGame } from '../../game/state';
-import { COUNTRY_DEFS } from '../../game/world';
+import { COUNTRY_DEFS, REGIONS } from '../../game/world';
 import { Bar, Card, Flag, KV, Rate, RelBar, Seg } from '../common';
 import { report, setUI, ui, useStore } from '../store';
 
@@ -107,12 +108,42 @@ function Target({ b }: { b: number }) {
       {perr && perr !== 'Не хватает денег' && <div class="small muted" style={{ marginTop: '4px' }}>{perr}</div>}
       <div class="sep" />
       {SPY_OPS.map((op) => <OpRow key={op.id} op={op} b={b} />)}
+      <ProxyRow b={b} />
       {watched(g, b) && (
         <div class="spy-dossier">
           <div class="small muted" style={{ marginBottom: '4px' }}>🔍 Досье — ещё {fmtDays((g.intel.watch[b] ?? 0) - g.day)}</div>
           <KV rows={dossier(g, b)} />
         </div>
       )}
+    </div>
+  );
+}
+
+/** Война чужими руками: оружие и инструкторы мятежникам в стране b. */
+function ProxyRow({ b }: { b: number }) {
+  const g = getGame()!;
+  const me = g.player;
+  const ready = netOf(g, me, b) >= PROXY_NET;
+  const err = proxyError(g, me, b);
+  const t = proxyTarget(g, me, b);
+  const where = t ? REGIONS[t.rid].name : '';
+  const go = () => setUI({ modal: { kind: 'confirm', danger: true, okText: 'Отправить оружие', title: `🔥 Вооружить повстанцев: ${COUNTRY_DEFS[b].name}?`,
+    text: `${t?.rebel ? `Мятеж в регионе ${where} уже идёт — поддержим его` : `Поднимем мятеж в регионе ${where}`}. Содержание — 💰 ${fmt(proxyFee(g, me))} в месяц. Если след раскроют, отношения упадут на 25, а ${COUNTRY_DEFS[b].name} получит законный повод для войны с нами.`,
+    ok: () => report(sponsorRebels(g, me, b)) } });
+  return (
+    <div class={`lodge-op ${ready ? '' : 'locked'}`}>
+      <div class="row">
+        <span class="big-ic">🔥</span>
+        <div class="grow">
+          <b>Вооружить повстанцев</b>
+          <div class="small muted">Война чужими руками — даже с ядерной державой. Две победы мятежников над гарнизоном — регион отделится, а присоединить его нам будет дешевле</div>
+          <div class="small lo-meta">
+            {ready ? `${where ? `${t?.rebel ? 'мятеж' : 'регион'}: ${where} · ` : ''}💰 ${fmt(proxyCost(g, me))} + ${fmt(proxyFee(g, me))}/мес` : `🔒 нужна сеть ${PROXY_NET}%`}
+          </div>
+        </div>
+        {ready && <button class="btn sm" disabled={!!err} title={err ?? undefined} onClick={go}>Начать</button>}
+      </div>
+      {ready && err && err !== 'Не хватает денег' && <div class="small muted" style={{ marginTop: '4px' }}>{err}</div>}
     </div>
   );
 }

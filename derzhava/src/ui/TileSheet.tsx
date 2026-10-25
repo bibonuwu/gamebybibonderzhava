@@ -1,7 +1,8 @@
 import {
-  annex, annexCost, annexError, atWar, attackError, buildCost, buildTime, demolish, placeError, reach, startBuild,
+  ALLY_DISCOUNT, annex, annexCost, annexError, atWar, attackError, buildCost, buildTime, demolish, placeError, reach, startBuild,
   startUpgrade, upgradeError,
 } from '../game/actions';
+import { rebelAt } from '../game/rebels';
 import { BUILDINGS, BUILDING_TYPES, LEVEL_EFFECT } from '../game/defs';
 import { REGION_FARM, regionDefense, regionWeight, STATS } from '../game/economy';
 import { fmt } from '../game/format';
@@ -42,6 +43,7 @@ export function TileSheet({ map }: { map: MapView }) {
   const isCenter = reg.center === tile;
   const cap = rs.cap0 * (1 + 0.15 * REGION_FARM[rid]) * (owner >= 0 ? STATS[owner].mods.cap : 1);
   const buildable = mine && !b && !isCenter ? BUILDING_TYPES.filter((t) => !placeError(g, me, tile, t)) : [];
+  const reb = rebelAt(g, rid);
 
   return (
     <div class="sheet">
@@ -63,6 +65,16 @@ export function TileSheet({ map }: { map: MapView }) {
       <div style={{ marginTop: '6px' }}><Bar value={rs.pop / cap} /></div>
       {inFallout(g, rid) && (
         <div class="small fallout-note">☢️ Радиоактивное заражение ещё {Math.ceil(g.fallout[rid] - g.day)} дн.: люди болеют и уезжают</div>
+      )}
+      {reb && (
+        <div class="small rebel-note">
+          ✊ Мятеж: ~{fmt(reb.fighters)} повстанцев
+          {reb.sponsor === me ? ' — их вооружаем мы' : reb.sponsor >= 0 && reb.exposed ? ` — их вооружает ${COUNTRY_DEFS[reb.sponsor].name}` : ''}
+          {mine && ' · что делать — во вкладке «Армия»'}
+        </div>
+      )}
+      {owner === -1 && rs.ally === me && (
+        <div class="small up" style={{ marginTop: '6px' }}>🏳️ Эта земля помнит нашу помощь: присоединение за {Math.round(ALLY_DISCOUNT * 100)}% обычной цены</div>
       )}
 
       {b && (

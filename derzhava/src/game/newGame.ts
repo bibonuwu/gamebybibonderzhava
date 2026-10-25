@@ -5,15 +5,16 @@ import { BASE_RATE } from './debt';
 import { initElections } from './elections';
 import { initLodge } from './lodge';
 import { newGood } from './market';
+import { applyScenario } from './scenarios';
 import { initSociety } from './society';
 import { initIntel } from './spy';
 import { log, rand } from './state';
-import type { Country, Difficulty, GameState, Personality } from './types';
+import type { Country, Difficulty, GameState, Personality, Scenario } from './types';
 import { COUNTRY_DEFS, REGIONS, continentFactor } from './world';
 
 export const SAVE_VERSION = 1;
 
-export function newGame(player: number, difficulty: Difficulty, seed = Date.now()): GameState {
+export function newGame(player: number, difficulty: Difficulty, seed = Date.now(), scenario: Scenario = 'classic'): GameState {
   const g: GameState = {
     version: SAVE_VERSION,
     day: 0,
@@ -25,6 +26,7 @@ export function newGame(player: number, difficulty: Difficulty, seed = Date.now(
     rel: [],
     pairs: {},
     battles: [],
+    rebels: [],
     missiles: [],
     fallout: {},
     un: [],
@@ -153,5 +155,9 @@ export function newGame(player: number, difficulty: Difficulty, seed = Date.now(
   });
   computeAll(g);
   log(g, `👑 Вы приняли власть: ${COUNTRY_DEFS[player].name}. Удачи, правитель!`, 'good', false);
+  if (scenario !== 'classic') {
+    applyScenario(g, scenario);
+    computeAll(g);
+  }
   return g;
 }

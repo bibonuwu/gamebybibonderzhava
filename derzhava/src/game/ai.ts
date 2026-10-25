@@ -1,11 +1,11 @@
 // Поведение ботов: оценка угроз, экономика, наука, армия, война, дипломатия и предложения игроку,
 // а ещё — рынок (еда, оружие, учёные), компании и ответы своему народу.
 import {
-  addRel, alliesOf, annex, annexCost, armyLimit, atWar, availableTechs, bestTileFor, buildCost, builderCost, builderError, cancelTreaty, cname,
-  declareWar, demandTribute, disband, enemiesOf, fundamentalCost, gift, giftCost, launchAttack, makePeace,
-  neighborCountries, peaceScore, peekPair, PLAYER_GRACE, propose, reachableTargets, recruit, recruitCost, research,
-  researchFundamental, seaReach, sharedFoe, sign, soldiersFor, startBuild, startUpgrade, techCost, upgradeBuilders, upgradeError,
-  warError, willAccept, type DiploKind,
+  addRel, alliesOf, annex, annexCost, armyLimit, atWar, availableTechs, BATTLE_LOCK, battleChance, battleNeed, bestTileFor, buildCost,
+  builderCost, builderError, cancelTreaty, cname, declareWar, demandTribute, disband, enemiesOf, fundamentalCost, gift, giftCost,
+  launchAttack, makePeace, neighborCountries, peaceScore, peekPair, PLAYER_GRACE, propose, reachableTargets, recruit, recruitCost,
+  reinforce, research, researchFundamental, retreat, seaReach, sendGuard, sharedFoe, sign, soldiersFor, startBuild, startUpgrade,
+  techCost, upgradeBuilders, upgradeError, warError, willAccept, type DiploKind,
 } from './actions';
 import {
   BUILDINGS, BUILDING_TYPES, COST_GROWTH, DIFFICULTY, GOVS, LEVEL_EFFECT, PERSONALITIES, WAR_GRACE_DAYS,
@@ -18,6 +18,7 @@ import { brothers } from './lodge';
 import { orderBrothers } from './order';
 import { aiNuclear, BOMB_TECH, isNuclear } from './nuclear';
 import { botPeople } from './people';
+import { botProxy, botRebels } from './rebels';
 import {
   buyCompany, buyCompanyError, companyPrice, foundCompany, foundCost, foundError, geniusError, geniusPrice, grantCost, grantError,
   hireGenius, hireScientists, inviteInvestors, investorsCost, investorsError, richTax, richTaxError, sciGrant, sciPrice,
@@ -69,6 +70,7 @@ export function aiTurn(g: GameState, i: number) {
     manageCorporations(g, i, th);
   }
   expandPeacefully(g, i, th);
+  manageBattles(g, i);
   wageWar(g, i, th);
   seekPeace(g, i, th);
   considerWar(g, i, th);
@@ -76,6 +78,8 @@ export function aiTurn(g: GameState, i: number) {
   botPeople(g, i, smart(g));
   botDebt(g, i);
   botSpy(g, i);
+  botRebels(g, i);
+  botProxy(g, i);
 }
 
 // ---------- оценка обстановки ----------
@@ -345,6 +349,25 @@ function grabNeutral(g: GameState, i: number) {
   }
   if (best >= 0 && rand(g) < 0.4 * DIFFICULTY[g.difficulty].aggression && !launchAttack(g, i, best, bestNeed * 1.15)) {
     c.aiFlags.nextAttack = g.day + 40;
+  }
+}
+
+/** Идущие бои: проигрываем наступление — подкрепление или отход, теряем регион — резервы туда (раз за бой). */
+function manageBattles(g: GameState, i: number) {
+  const c = g.countries[i];
+  for (const bt of g.battles) {
+    if (bt.end - g.day < BATTLE_LOCK || (bt.att !== i && bt.def !== i)) continue;
+    if (!smart(g)) continue;
+    const p = battleChance(g, bt);
+    if (bt.att === i) {
+      if (p >= 0.45) continue;
+      const need = battleNeed(g, bt, 'att', 0.65);
+      if (need <= c.soldiers * 0.3) reinforce(g, i, bt.id, need);
+      else if (p < 0.2) retreat(g, i, bt.id);
+    } else if (!bt.guard && p > 0.55) {
+      const need = battleNeed(g, bt, 'def', 0.35);
+      if (need > 0) sendGuard(g, i, bt.id, Math.min(need, c.soldiers * 0.25));
+    }
   }
 }
 

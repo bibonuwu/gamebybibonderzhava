@@ -61,6 +61,7 @@ export class MapView {
   world = new Container();
   /** Красивости: облака, волны, пульсации. Выключаются в настройках для слабых телефонов. */
   fancy = true;
+  private active = true;
   private waterG = new Graphics();
   private waveA = new Graphics();
   private waveB = new Graphics();
@@ -118,6 +119,7 @@ export class MapView {
   private countryText = new Map<number, Text>();
   private buildSprites = new Map<number, Sprite>();
   private battleSprites = new Map<number, Sprite>();
+  private rebelSprites = new Map<number, Sprite>();
   private textures = new Map<string, Texture>();
   private game: GameState | null = null;
   private selected = -1;
@@ -963,6 +965,28 @@ export class MapView {
     }
   }
 
+  /** Кулак над регионом, где идёт мятеж. */
+  private syncRebels() {
+    const gm = this.game!;
+    const seen = new Set<number>();
+    for (const r of gm.rebels ?? []) {
+      seen.add(r.id);
+      if (this.rebelSprites.has(r.id)) continue;
+      const sp = new Sprite(this.plainTexture('fx-rebel', '✊'));
+      sp.anchor.set(0.5);
+      const [cx, cy] = tileCenter(REGIONS[r.region].center);
+      sp.position.set(cx + 9, cy - 9);
+      sp.scale.set(0.2);
+      this.battleLayer.addChild(sp);
+      this.rebelSprites.set(r.id, sp);
+    }
+    for (const [id, sp] of this.rebelSprites) {
+      if (seen.has(id)) continue;
+      sp.destroy();
+      this.rebelSprites.delete(id);
+    }
+  }
+
   // ---------- выделение ----------
   select(tile: number) {
     this.selected = tile;
@@ -1048,6 +1072,8 @@ export class MapView {
     this.falloutSprites.clear();
     this.falloutG.clear();
     this.falloutKey = '';
+    for (const sp of this.rebelSprites.values()) sp.destroy();
+    this.rebelSprites.clear();
     mapFx.length = 0;
     if (!g) return;
     mapDirty.territory = true;
@@ -1071,6 +1097,7 @@ export class MapView {
       this.syncProgress();
     }
     this.syncBattles();
+    this.syncRebels();
     this.syncFallout();
     this.spawnEffects();
   }
@@ -1117,10 +1144,23 @@ export class MapView {
     this.panKeys.clear();
   }
 
+  /** Карту закрыла вкладка — не рисуем её вовсе (батарея); вернулись — время эффектов идёт дальше. */
+  setActive(on: boolean) {
+    if (on === this.active) return;
+    this.active = on;
+    if (on) this.app.ticker.start();
+    else this.app.ticker.stop();
+  }
+
   // ---------- кадр ----------
   private frame() {
     const dt = this.app.ticker.deltaMS;
     const now = performance.now();
+    // шейдер воды на весь экран дорог: 60 кадров — когда карту двигают, в покое хватит 30 (без эффектов — 15)
+    const busy = this.pointers.size > 0 || this.panKeys.size > 0 || !!this.tween || !!this.zoomGoal
+      || !!this.vel.x || !!this.vel.y || this.shake > 0 || this.screenFlash.alpha > 0;
+    const fps = busy ? 60 : this.fancy ? 30 : 15;
+    if (this.app.ticker.maxFPS !== fps) this.app.ticker.maxFPS = fps;
     if (this.tween) {
       const tw = this.tween;
       tw.t = Math.min(1, tw.t + dt / tw.dur);

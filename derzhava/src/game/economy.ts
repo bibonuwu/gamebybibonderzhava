@@ -207,6 +207,8 @@ export function computeAll(g: GameState) {
     });
   }
   const sanc = sanctionPenalty(g, n);
+  const rebels: number[] = new Array(n).fill(0);
+  for (const r of g.rebels ?? []) rebels[r.country]++;
   const brothers = new Set(g.lodge?.members ?? []);
   const order = new Set(g.order?.members ?? []); // братья своей ложи игрока
   REGION_FARM.fill(0);
@@ -267,7 +269,10 @@ export function computeAll(g: GameState) {
   g.regions.forEach((r, id) => {
     if (r.owner >= 0) agri[r.owner] += (r.agri ?? 0) * (1 + (0.3 * REGION_FARM[id]) / (REGION_FARM[id] + 3));
   });
-  for (const b of g.battles) if (b.att >= 0 && stats[b.att]) stats[b.att].deployed += b.soldiers;
+  for (const b of g.battles) {
+    if (b.att >= 0 && stats[b.att]) stats[b.att].deployed += b.soldiers;
+    if (b.guard && b.def >= 0 && stats[b.def]) stats[b.def].deployed += b.guard;
+  }
 
   // мировые компании и звёзды науки
   const wmods = wonderMods(g);
@@ -324,6 +329,7 @@ export function computeAll(g: GameState) {
     if (c.unrest > 0.5) parts.push(['Недовольство на новых землях', -c.unrest]);
     if (c.money < 0) parts.push(['Долги казны', -15]);
     if (s.hunger > 0) parts.push(['Голод', -Math.max(3, 30 * s.hunger)]);
+    if (rebels[i]) parts.push(['Мятежи', -2.5 * rebels[i]]);
     s.sanctions = sanc[i];
     if (s.sanctions > 0) parts.push(['Санкции ООН', -s.sanctions * 25]);
     if (mods.stab) parts.push(['Технологии и чудеса', mods.stab]);
@@ -462,8 +468,8 @@ function planFoodTrade(g: GameState, c: Country, s: CountryStats) {
   s.hunger = avail >= s.foodCons ? 0 : Math.min(1, 1 - avail / Math.max(1, s.foodCons));
 }
 
-/** Сила обороны региона (для боя и подсказок). */
-export function regionDefense(g: GameState, rid: number): { garrison: number; strength: number } {
+/** Сила обороны региона (для боя и подсказок). guard — резервы, переброшенные сюда защитником. */
+export function regionDefense(g: GameState, rid: number, guard = 0): { garrison: number; strength: number } {
   const r = g.regions[rid];
   const info = REGIONS[rid];
   const terrain = 1 + info.mountainShare * 0.6 + info.forestShare * 0.25;
@@ -473,7 +479,7 @@ export function regionDefense(g: GameState, rid: number): { garrison: number; st
   }
   const d = g.countries[r.owner];
   const s = STATS[r.owner];
-  const garrison = d.soldiers / Math.max(1, s.regions.length);
+  const garrison = d.soldiers / Math.max(1, s.regions.length) + guard;
   const fort = 1 + 0.4 * REGION_FORT[rid];
   const cap = d.capital === rid ? 1.5 : 1;
   return { garrison, strength: garrison * s.weapons * s.morale * s.quality * terrain * fort * cap * s.mods.defense * difficultyMult(g, r.owner) };

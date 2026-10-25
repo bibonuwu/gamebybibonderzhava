@@ -134,8 +134,15 @@ h1, h2, h3 { font-family: var(--head); margin: 0; letter-spacing: 0.04em; }
 /* зелёная точка: здесь можно что-то сделать прямо сейчас */
 .badge.dot {
   min-width: 10px; width: 10px; height: 10px; padding: 0; top: 13px; right: calc(50% - 21px);
-  background: var(--good); animation: dot-pulse 1.8s ease-out infinite;
+  background: var(--good);
 }
+/* волна от точки — масштабом и прозрачностью: так её рисует видеокарта, без перерисовки страницы каждый кадр */
+.badge.dot::after {
+  content: ''; position: absolute; inset: 0; border-radius: 50%; pointer-events: none;
+  box-shadow: 0 0 0 2px rgba(95, 211, 138, 0.6); animation: dot-ring 1.8s ease-out infinite;
+}
+.no-fx .badge.dot::after { display: none; }
+@keyframes dot-ring { to { transform: scale(2.3); opacity: 0; } }
 @keyframes badge-in { from { transform: scale(0); } }
 @keyframes dot-pulse { 0% { box-shadow: 0 0 0 2px rgba(10, 22, 40, 0.9), 0 0 0 2px rgba(95, 211, 138, 0.6); } 100% { box-shadow: 0 0 0 2px rgba(10, 22, 40, 0.9), 0 0 0 9px rgba(95, 211, 138, 0); } }
 
@@ -628,6 +635,29 @@ canvas.chart { width: 100%; height: 170px; display: block; }
 @keyframes fly { to { transform: translate(3px, -3px); } }
 .fact { margin-top: 4px; color: #cfe6a8; font-style: italic; line-height: 1.35; }
 .fallout-note { margin-top: 6px; color: #cfe6a8; }
+.rebel-note { margin-top: 6px; color: #ffb59a; }
+
+/* ---------- мятежи ---------- */
+.rebel-row { padding: 9px 2px; border-bottom: 1px solid rgba(157, 176, 204, 0.12); }
+.rebel-row:last-child { border-bottom: 0; }
+.rebel-act { flex-direction: column; gap: 0; }
+.rebel-act .small { font-weight: 400; }
+
+/* ---------- слоты сохранений ---------- */
+.slot-row {
+  display: flex; align-items: center; gap: 8px; padding: 8px; margin-bottom: 6px; cursor: pointer;
+  border: 1px solid rgba(157, 176, 204, 0.18); border-radius: 10px; transition: border-color 0.2s, background 0.2s;
+}
+.slot-row.on { border-color: var(--gold); background: rgba(216, 180, 92, 0.08); }
+.slot-row .grow { min-width: 0; }
+.slot-row .btn.sm { min-width: 38px; padding: 4px 8px; }
+.slot-n {
+  flex: none; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 12px; font-weight: 700; color: var(--muted); border: 1px solid var(--line);
+}
+.slot-row.on .slot-n { background: var(--gold); border-color: var(--gold); color: #1b1404; }
+.slot-trash { display: flex; align-items: center; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.slot-trash .grow { min-width: 0; }
 @media (prefers-reduced-motion: reduce) { .warheads .wh, .inbound, .missile-ic { animation: none; } }
 
 /* ---------- наши договоры ---------- */

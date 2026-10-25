@@ -131,6 +131,11 @@ export function KV({ rows }: { rows: [ComponentChildren, ComponentChildren][] })
   );
 }
 
+/** Текст для покадровых счётчиков: трогаем DOM, только когда цифры сменились, — иначе вёрстка пересчитывается каждый кадр. */
+export function setText(el: HTMLElement | null, s: string) {
+  if (el && el.textContent !== s) el.textContent = s;
+}
+
 /** Число, которое плавно растёт между тиками: base + rate × доля секунды. */
 export function LiveNum({ base, rate }: { base: number; rate: number }) {
   const ref = useRef<HTMLSpanElement>(null);
@@ -141,7 +146,7 @@ export function LiveNum({ base, rate }: { base: number; rate: number }) {
     const loop = () => {
       id = requestAnimationFrame(loop);
       const f = ui.paused ? 0 : ui.frac;
-      if (ref.current) ref.current.textContent = fmt(v.current.base + v.current.rate * f);
+      setText(ref.current, fmt(v.current.base + v.current.rate * f));
     };
     loop();
     return () => cancelAnimationFrame(id);

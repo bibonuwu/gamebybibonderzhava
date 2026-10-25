@@ -50,6 +50,7 @@ export const embargoed = (g: GameState, x: number) =>
 export function warJustice(g: GameState, a: number, b: number): { just: boolean; reason: string } {
   if (isAggressor(g, b)) return { just: true, reason: `помощь жертве агрессии (${victimsOf(g, b).map((v) => cname(g, v)).join(', ')})` };
   if (g.countries[b].aiFlags.prepTarget === a) return { just: true, reason: 'упреждающий удар: она сама готовила нападение' };
+  if (g.rebels?.some((r) => r.country === a && r.sponsor === b && r.exposed)) return { just: true, reason: 'ответ на войну чужими руками: она вооружает мятежников у нас' };
   return { just: false, reason: 'нападение без причины' };
 }
 

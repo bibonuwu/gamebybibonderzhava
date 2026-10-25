@@ -1,4 +1,4 @@
-// Прогон симуляции без графики: npm run sim -- [дней] [страна]
+// Прогон симуляции без графики: npm run sim -- [дней] [страна] [bot|idle] [classic|coldwar|turmoil]
 import { STATS } from '../src/game/economy';
 import { fmt } from '../src/game/format';
 import { newGame } from '../src/game/newGame';
@@ -9,14 +9,16 @@ import { aiTurn } from '../src/game/ai';
 import { resolveEvent } from '../src/game/events';
 import { WONDER_BY_ID } from '../src/game/wonders';
 import { foodDays, showPrice } from '../src/game/market';
+import type { Scenario } from '../src/game/types';
 
 const days = Number(process.argv[2] ?? 1500);
 const playerId = process.argv[3] ?? 'kz';
 const player = COUNTRY_DEFS.findIndex((c) => c.id === playerId);
-const g = newGame(player, 'normal', 12345);
+const scenario = (process.argv[5] ?? 'classic') as Scenario;
+const g = newGame(player, 'normal', Number(process.env.SEED ?? 12345), scenario);
 
 function report() {
-  console.log(`\n=== день ${g.day} === живых стран: ${g.countries.filter((c) => c.alive).length}, боёв: ${g.battles.length}, нейтральных регионов: ${g.regions.filter((r) => r.owner < 0).length}`);
+  console.log(`\n=== день ${g.day} === живых стран: ${g.countries.filter((c) => c.alive).length}, боёв: ${g.battles.length}, нейтральных регионов: ${g.regions.filter((r) => r.owner < 0).length}, мятежей: ${g.rebels.length} (с покровителем: ${g.rebels.filter((r) => r.sponsor >= 0).length}), отделилось регионов: ${g.counters.seceded ?? 0}, распадов: ${g.counters.collapses ?? 0}`);
   console.log(`  рынок: 🌾 ${fmt(showPrice(g, 'food'))}/1M т (запас ${fmt(g.market.food.stock / g.market.food.norm * 100)}%)  🔫 ${fmt(showPrice(g, 'arms'))}/1K (запас ${fmt(g.market.arms.stock / g.market.arms.norm * 100)}%)  учёных ищут работу: ${fmt(g.market.sciPool)}  компаний: ${g.companies.length}  гениев: ${g.geniuses.filter((x) => x.employer >= 0).length}/${g.geniuses.length}`);
   const rows = g.countries
     .map((c, i) => ({ c, s: STATS[i], d: COUNTRY_DEFS[i] }))

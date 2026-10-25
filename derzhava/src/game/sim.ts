@@ -15,6 +15,7 @@ import { tickMail } from './mail';
 import { tickMarket } from './market';
 import { triggerDemand } from './people';
 import { checkQuests } from './quests';
+import { tickRebels } from './rebels';
 import { tickSociety } from './society';
 import { tickSpy } from './spy';
 import { allBuildings, banner, fx, log, mapDirty, news, pick, sfx, toast } from './state';
@@ -79,6 +80,7 @@ export function tick(g: GameState) {
     computeAll(g);
     for (const b of done) resolveBattle(g, b);
   }
+  tickRebels(g);
 
   tickWonders(g);
   tickNuclear(g);

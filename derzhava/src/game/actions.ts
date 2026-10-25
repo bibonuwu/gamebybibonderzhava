@@ -305,8 +305,11 @@ export function annexCost(g: GameState, ci: number, rid: number): number {
   const c = g.countries[ci];
   const pop = g.regions[rid].pop;
   const gross = Math.max(c.lastGross, 30);
-  return gross * 150 * (1 + (pop / Math.max(1, s.civPop)) * 3) * Math.pow(1.12, c.annexCount) + REGIONS[rid].tiles.length * 50 * c.baseProd;
+  const friend = g.regions[rid].ally === ci ? ALLY_DISCOUNT : 1; // помогли отделиться — земля сама просится к нам
+  return (gross * 150 * (1 + (pop / Math.max(1, s.civPop)) * 3) * Math.pow(1.12, c.annexCount) + REGIONS[rid].tiles.length * 50 * c.baseProd) * friend;
 }
+/** Во сколько обходится присоединение земли, которой мы помогли отделиться (доля обычной цены). */
+export const ALLY_DISCOUNT = 0.4;
 export function annexError(g: GameState, ci: number, rid: number): string | null {
   if (g.regions[rid].owner !== -1) return 'Это не нейтральная земля';
   if (!reach(g, ci, rid)) return 'Нет общей границы (или порта для пути по морю)';
@@ -334,6 +337,7 @@ export function transferRegion(g: GameState, rid: number, to: number, conquest: 
   const from = g.regions[rid].owner;
   const share = g.regions[rid].pop / Math.max(1, STATS[to]?.civPop ?? 1);
   g.regions[rid].owner = to;
+  delete g.regions[rid].ally;
   if (conquest) {
     if (from >= 0) onConquest(g, from, to);
     g.regions[rid].pop *= 0.97;
@@ -476,6 +480,10 @@ export function makePeace(g: GameState, a: number, b: number, quiet = false) {
   for (const bt of g.battles.filter((x) => (x.att === a && x.def === b) || (x.att === b && x.def === a))) {
     g.countries[bt.att].soldiers += bt.soldiers;
     if (bt.att === me) back += bt.soldiers;
+    if (bt.guard) {
+      g.countries[bt.def].soldiers += bt.guard;
+      if (bt.def === me) back += bt.guard;
+    }
   }
   g.battles = g.battles.filter((x) => !((x.att === a && x.def === b) || (x.att === b && x.def === a)));
   addRel(g, a, b, 20);
@@ -540,16 +548,99 @@ export function soldiersFor(g: GameState, ci: number, rid: number, p: number) {
   return Math.ceil((D * Math.sqrt(p / (1 - p))) / Math.max(1e-9, per));
 }
 
+// ---------- ход боя: подкрепления, отступление, резервы защитника ----------
+type BattleT = GameState['battles'][number];
+/** Последние дни боя ничего уже не изменить. */
+export const BATTLE_LOCK = 3;
+const battleForces = (g: GameState, bt: BattleT) => ({
+  A: bt.soldiers * attackPerSoldier(g, bt.att, bt.naval),
+  D: regionDefense(g, bt.region, bt.guard ?? 0).strength,
+});
+/** Шанс нападающего выиграть идущий бой. */
+export function battleChance(g: GameState, bt: BattleT) {
+  const { A, D } = battleForces(g, bt);
+  return A <= 0 ? 0 : (A * A) / (A * A + D * D || 1);
+}
+/** Сколько ещё солдат нужно стороне side, чтобы шанс нападающего стал p (для защитника — упал до p). */
+export function battleNeed(g: GameState, bt: BattleT, side: 'att' | 'def', p: number) {
+  const { A, D } = battleForces(g, bt);
+  if (side === 'att') {
+    const per = attackPerSoldier(g, bt.att, bt.naval);
+    return Math.max(0, Math.ceil((D * Math.sqrt(p / (1 - p))) / Math.max(1e-9, per) - bt.soldiers));
+  }
+  if (bt.def < 0) return 0;
+  const per = regionDefense(g, bt.region, 1).strength - regionDefense(g, bt.region, 0).strength;
+  return Math.max(0, Math.ceil((A * Math.sqrt((1 - p) / p) - D) / Math.max(1e-9, per)));
+}
+export function battleActError(g: GameState, ci: number, bt: BattleT | undefined, side: 'att' | 'def'): string | null {
+  if (!bt || (side === 'att' ? bt.att : bt.def) !== ci) return 'Нет такого боя';
+  if (bt.end - g.day < BATTLE_LOCK) return 'Бой почти закончен — поздно';
+  if (g.countries[ci].soldiers < 1) return 'Нет свободных солдат';
+  return null;
+}
+/** Подкрепление в наступление. */
+export function reinforce(g: GameState, ci: number, id: number, n: number): string | null {
+  const bt = g.battles.find((b) => b.id === id);
+  const err = battleActError(g, ci, bt, 'att');
+  if (err) return err;
+  const c = g.countries[ci];
+  n = Math.floor(Math.min(n, c.soldiers));
+  if (n < 1) return 'Нет свободных солдат';
+  c.soldiers -= n;
+  bt!.soldiers += n;
+  computeAll(g);
+  return null;
+}
+/** Резервы в обороняющийся регион: гарнизон там крепче, но меньше солдат остаётся на остальных землях. */
+export function sendGuard(g: GameState, ci: number, id: number, n: number): string | null {
+  const bt = g.battles.find((b) => b.id === id);
+  const err = battleActError(g, ci, bt, 'def');
+  if (err) return err;
+  const c = g.countries[ci];
+  n = Math.floor(Math.min(n, c.soldiers));
+  if (n < 1) return 'Нет свободных солдат';
+  c.soldiers -= n;
+  bt!.guard = (bt!.guard ?? 0) + n;
+  if (bt!.att === g.player) log(g, `🛡️ ${cname(g, ci)} перебрасывает резервы в ${REGIONS[bt!.region].name}`, 'war');
+  computeAll(g);
+  return null;
+}
+/** Отступить: уцелевшие возвращаются, но чем дольше шёл бой, тем дороже отход под огнём. */
+export function retreat(g: GameState, ci: number, id: number): string | null {
+  const bt = g.battles.find((b) => b.id === id);
+  if (!bt || bt.att !== ci) return 'Нет такого боя';
+  const c = g.countries[ci];
+  const loss = bt.soldiers * (0.04 + 0.16 * Math.min(1, (g.day - bt.start) / BATTLE_DAYS));
+  c.soldiers += bt.soldiers - loss;
+  c.arms = Math.max(0, c.arms - loss * Math.min(1, STATS[ci].equip) * 0.7);
+  if (bt.guard && bt.def >= 0) g.countries[bt.def].soldiers += bt.guard;
+  g.battles = g.battles.filter((b) => b.id !== id);
+  const rname = REGIONS[bt.region].name;
+  if (ci === g.player) log(g, `↩️ Войска отходят от региона ${rname}: потеряно ${fmtK(loss)}`, 'war');
+  else if (bt.def === g.player) {
+    g.counters.defended = (g.counters.defended ?? 0) + 1;
+    sfx('victory');
+    log(g, `🛡️ ${cname(g, ci)} отступила от региона ${rname} (потеряла ${fmtK(loss)})`, 'good');
+  }
+  computeAll(g);
+  return null;
+}
+
 export function resolveBattle(g: GameState, bt: (typeof g.battles)[number]) {
   const att = g.countries[bt.att];
   const r = g.regions[bt.region];
-  if (!att.alive) return;
+  const guard = bt.def >= 0 ? bt.guard ?? 0 : 0;
+  if (!att.alive) {
+    if (guard) g.countries[bt.def].soldiers += guard;
+    return;
+  }
   if (r.owner !== bt.def || (bt.def >= 0 && !atWar(g, bt.att, bt.def))) {
     att.soldiers += bt.soldiers;
+    if (guard) g.countries[bt.def].soldiers += guard;
     return;
   }
   const A = bt.soldiers * attackPerSoldier(g, bt.att, bt.naval);
-  const { garrison, strength: D } = regionDefense(g, bt.region);
+  const { garrison, strength: D } = regionDefense(g, bt.region, guard);
   const p = (A * A) / (A * A + D * D || 1);
   const win = rand(g) < p;
   const ratio = D / Math.max(1e-9, A);
@@ -568,7 +659,9 @@ export function resolveBattle(g: GameState, bt: (typeof g.battles)[number]) {
   att.arms = Math.max(0, att.arms - attLoss * Math.min(1, sa.equip) * 0.7);
   if (bt.def >= 0) {
     const d = g.countries[bt.def];
-    d.soldiers = Math.max(0, d.soldiers - defLoss);
+    // переброшенные резервы гибнут в той же доле, что и гарнизон; уцелевшие возвращаются в армию
+    const guardLoss = guard * (defLoss / Math.max(1e-9, garrison));
+    d.soldiers = Math.max(0, d.soldiers - (defLoss - guardLoss) + (guard - guardLoss));
     d.arms = Math.max(0, d.arms - defLoss * Math.min(1, STATS[bt.def].equip) * 0.7);
     d.weariness = Math.min(100, d.weariness + 1 + (defLoss / Math.max(1, STATS[bt.def].civPop)) * 3000);
   }
@@ -608,6 +701,7 @@ export function resolveBattle(g: GameState, bt: (typeof g.battles)[number]) {
       log(g, `❌ Наступление на ${rname} отбито (${lossTxt})`, 'bad');
     } else if (bt.def === g.player) {
       g.counters.defended = (g.counters.defended ?? 0) + 1;
+      if (guard) g.counters.guardHolds = (g.counters.guardHolds ?? 0) + 1;
       sfx('victory');
       log(g, `🛡️ Мы отбили атаку на ${rname} (${lossTxt})`, 'good');
     }

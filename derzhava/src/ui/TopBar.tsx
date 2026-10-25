@@ -6,7 +6,7 @@ import { isFree } from '../game/elections';
 import type { GameState } from '../game/types';
 import { fmt, fmtDate, fmtRate } from '../game/format';
 import { getGame, headlines, type Headline } from '../game/state';
-import { Flag } from './common';
+import { Flag, setText } from './common';
 import { cycleSpeed, prefs, setUI, ui, useStore, type Tab } from './store';
 import { COUNTRY_DEFS } from '../game/world';
 
@@ -30,9 +30,9 @@ export function TopBar() {
       const cc = gm.countries[gm.player];
       const ss = STATS[gm.player];
       const f = ui.paused || gm.gameOver ? 0 : ui.frac;
-      if (vBrains.current) vBrains.current.textContent = fmt(cc.brains + ss.brainsRate * f);
-      if (vMoney.current) vMoney.current.textContent = fmt(cc.money + ss.moneyRate * f);
-      if (vPop.current) vPop.current.textContent = fmt(ss.civPop + ss.popRate * f);
+      setText(vBrains.current, fmt(cc.brains + ss.brainsRate * f));
+      setText(vMoney.current, fmt(cc.money + ss.moneyRate * f));
+      setText(vPop.current, fmt(ss.civPop + ss.popRate * f));
     };
     loop();
     return () => cancelAnimationFrame(id);
@@ -151,7 +151,7 @@ export function BottomNav() {
   useStore();
   const g = getGame()!;
   const badges: Partial<Record<Tab, number>> = {
-    army: g.proposals.length + g.battles.filter((b) => b.att === g.player || b.def === g.player).length,
+    army: g.proposals.length + g.battles.filter((b) => b.att === g.player || b.def === g.player).length + g.rebels.filter((r) => r.country === g.player).length,
     market: STATS[g.player]?.hunger > 0 ? 1 : 0,
   };
   const dots = hints(g);

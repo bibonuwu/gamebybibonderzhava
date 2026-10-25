@@ -1,7 +1,7 @@
 import { useState } from 'preact/hooks';
 import {
-  armyLimit, atWar, attackError, disband, enemiesOf, launchAttack, peaceTerms, peekPair, proposePeace, reachableTargets, recruit,
-  recruitCost, soldiersFor, winChance,
+  armyLimit, atWar, attackError, BATTLE_LOCK, battleChance, battleNeed, disband, enemiesOf, launchAttack, peaceTerms, peekPair,
+  proposePeace, reachableTargets, recruit, recruitCost, reinforce, retreat, sendGuard, soldiersFor, winChance,
 } from '../../game/actions';
 import { BATTLE_DAYS, BUDGET_INFO, BUDGET_LEVELS } from '../../game/defs';
 import { computeAll, equipFactor, regionDefense, STATS } from '../../game/economy';
@@ -11,8 +11,10 @@ import { victimsOf } from '../../game/un';
 import { COUNTRY_DEFS, REGIONS } from '../../game/world';
 import { Bar, Card, Flag, KV, More, Rate, Seg } from '../common';
 import { NuclearCard } from './NuclearCard';
+import { RebelsCard } from './RebelsCard';
 import { report, setUI, useStore } from '../store';
 import type { MapView } from '../../map/MapView';
+import type { Battle } from '../../game/types';
 
 export function ArmyPanel({ map }: { map: MapView }) {
   useStore();
@@ -89,23 +91,10 @@ export function ArmyPanel({ map }: { map: MapView }) {
           })}
         </Card>
       )}
+      <RebelsCard map={map} />
       {myBattles.length > 0 && (
-        <Card title="⚔️ Сражения">
-          {myBattles.map((b) => (
-            <div class="list-item" key={b.id}>
-              <span class="big-ic">{b.att === me ? '🗡️' : '🛡️'}</span>
-              <div class="grow">
-                <div class="row between">
-                  <b>{REGIONS[b.region].name}</b>
-                  <span class="small muted">{Math.max(0, Math.ceil(b.end - g.day))} сек</span>
-                </div>
-                <div class="small muted">
-                  {b.att === me ? `Наступаем: ${fmt(b.soldiers)} солдат против ${b.def >= 0 ? COUNTRY_DEFS[b.def].name : 'местного ополчения'}` : `Наступает ${COUNTRY_DEFS[b.att].name}: ${fmt(b.soldiers)} солдат`}
-                </div>
-                <Bar value={(g.day - b.start) / BATTLE_DAYS} color={b.att === me ? undefined : 'red'} />
-              </div>
-            </div>
-          ))}
+        <Card title="⚔️ Сражения" hint="Пока бой идёт, его исход можно изменить: в наступление — прислать подкрепление или отступить (чем позже, тем больше потерь при отходе), в обороне — перебросить резервы в регион. За 3 дня до конца менять уже поздно.">
+          {myBattles.map((b) => <BattleRow key={b.id} b={b} />)}
         </Card>
       )}
       <Card title="🎯 Цели" hint="Враги и нейтральные земли рядом. Чтобы напасть на страну, сначала объявите ей войну на соседней вкладке «Дипломатия». Порт позволяет высаживаться с моря.">
@@ -129,6 +118,55 @@ export function ArmyPanel({ map }: { map: MapView }) {
         ))}
       </Card>
     </>
+  );
+}
+
+/** Идущий бой: шанс, подкрепление, отступление или резервы в оборону. */
+function BattleRow({ b }: { b: Battle }) {
+  const g = getGame()!;
+  const me = g.player;
+  const c = g.countries[me];
+  const attack = b.att === me;
+  const p = battleChance(g, b);
+  const ours = attack ? p : 1 - p;
+  const late = b.end - g.day < BATTLE_LOCK;
+  const n = Math.min(Math.floor(c.soldiers), attack ? battleNeed(g, b, 'att', 0.8) : battleNeed(g, b, 'def', 0.25));
+  const back = () => setUI({ modal: {
+    kind: 'confirm', danger: true, okText: 'Отступить', title: `↩️ Отступить от региона ${REGIONS[b.region].name}?`,
+    text: `Уцелевшие вернутся, но отход под огнём стоит ${Math.round((0.04 + 0.16 * Math.min(1, (g.day - b.start) / BATTLE_DAYS)) * 100)}% войска.`,
+    ok: () => report(retreat(g, me, b.id)),
+  } });
+  return (
+    <div class="list-item">
+      <span class="big-ic">{attack ? '🗡️' : '🛡️'}</span>
+      <div class="grow">
+        <div class="row between">
+          <b>{REGIONS[b.region].name}</b>
+          <span class="small muted">{Math.max(0, Math.ceil(b.end - g.day))} сек</span>
+        </div>
+        <div class="small muted">
+          {attack ? `Наступаем: ${fmt(b.soldiers)} солдат против ${b.def >= 0 ? COUNTRY_DEFS[b.def].name : 'местного ополчения'}` : `Наступает ${COUNTRY_DEFS[b.att].name}: ${fmt(b.soldiers)} солдат`}
+          {b.guard ? ` · резервы ${b.def === me ? 'наши' : 'врага'}: ${fmt(b.guard)}` : ''}
+        </div>
+        <Bar value={(g.day - b.start) / BATTLE_DAYS} color={attack ? undefined : 'red'} />
+        <div class="row between small" style={{ marginTop: '4px' }}>
+          <span class="muted">Наш шанс</span>
+          <b class={`num ${ours >= 0.6 ? 'up' : ours < 0.4 ? 'down' : ''}`}>{Math.round(ours * 100)}%</b>
+        </div>
+        {late ? (
+          <div class="small muted" style={{ marginTop: '4px' }}>⏳ Исход решается — менять поздно</div>
+        ) : (
+          <div class="row" style={{ marginTop: '6px', gap: '6px' }}>
+            {n >= 1 && (
+              <button class="btn sm grow" onClick={() => report(attack ? reinforce(g, me, b.id, n) : sendGuard(g, me, b.id, n), attack ? `➕ ${fmt(n)} солдат идут на подмогу` : `🛡️ ${fmt(n)} солдат переброшены в ${REGIONS[b.region].name}`)}>
+                {attack ? `➕ Подкрепление ${fmt(n)}` : `🛡️ Резервы ${fmt(n)}`}
+              </button>
+            )}
+            {attack && <button class="btn sm ghost" onClick={back}>↩️ Отступить</button>}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

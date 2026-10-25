@@ -16,6 +16,7 @@ import { RATINGS, rating } from '../../game/debt';
 import { pending } from '../../game/assembly';
 import { brothers, visibleMembers } from '../../game/lodge';
 import { inOrder, invite, inviteCost, inviteError, joinChance } from '../../game/order';
+import { nearCollapse, rebelsIn } from '../../game/rebels';
 import { dossier, netOf, watched } from '../../game/spy';
 import { WONDER_BY_ID, wondersOf } from '../../game/wonders';
 import { COUNTRY_DEFS, REGIONS } from '../../game/world';
@@ -144,6 +145,13 @@ export function CountryDialog({ id }: { id: number }) {
         <p class="small down" style={{ marginTop: '-6px' }}>
           🌐 Агрессор: напала на {victimsOf(g, id).map((v) => COUNTRY_DEFS[v].name).join(', ')}{s.sanctions > 0 && ` · санкции −${Math.round(s.sanctions * 100)}% производства`}
         </p>
+      )}
+      {g.rebels.some((r) => r.country === me && r.sponsor === id && r.exposed) && (
+        <p class="small down" style={{ marginTop: '-6px' }}>🔥 Вооружает мятежников у нас — война с ней будет справедливой</p>
+      )}
+      {nearCollapse(g, id) && <p class="small down" style={{ marginTop: '-6px' }}>💔 Глубокий кризис: страна на грани распада</p>}
+      {rebelsIn(g, id).length > 0 && (
+        <p class="small" style={{ marginTop: '-6px' }}>✊ Мятежи: {rebelsIn(g, id).map((r) => REGIONS[r.region].name).join(', ')}</p>
       )}
       <div class="card">
         <KV rows={[

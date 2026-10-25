@@ -4,13 +4,14 @@ import { STATS } from '../game/economy';
 import { resolveEvent } from '../game/events';
 import { fmt, fmtDate } from '../game/format';
 import { claimQuest, questIcon, questProgress, questText, SKIP_COOLDOWN, skipQuest } from '../game/quests';
-import { deleteSave, saveGame } from '../game/save';
+import { activeSlot, deleteSave, saveGame } from '../game/save';
 import { banners, deals, dismissToast, emit, getGame, setGame, toast, toasts, type Deal } from '../game/state';
 import { COUNTRY_DEFS, REGIONS } from '../game/world';
 import type { MapView } from '../map/MapView';
 import { AudioSettings } from './AudioSettings';
 import { InstallApp } from './InstallApp';
 import { MailModal } from './Mail';
+import { downloadGame } from './Saves';
 import { Bar, CountUp, Effects, KV, More, Rate, relColor } from './common';
 import { AttackDialog } from './panels/ArmyPanel';
 import { CountryDialog, ProposalRow } from './panels/DiploPanel';
@@ -144,7 +145,10 @@ function Details({ res }: { res: 'money' | 'brains' | 'pop' | 'stab' }) {
 
 function Menu({ map }: { map: MapView }) {
   const g = getGame()!;
-  const [confirmNew, setConfirmNew] = useState(false);
+  const save = () => {
+    if (saveGame(g)) toast(`💾 Игра сохранена (слот ${activeSlot()})`, 'good');
+    else toast('Не удалось сохранить: хранилище браузера переполнено или недоступно. Скачайте сохранение файлом', 'bad');
+  };
   return (
     <>
       <div class="m-ic">👑</div>
@@ -152,13 +156,10 @@ function Menu({ map }: { map: MapView }) {
       <p class="small muted">{fmtDate(g.day)} · день {g.day}</p>
       <div class="col">
         <button class="btn block" onClick={() => setUI({ modal: null })}>▶ Продолжить</button>
-        <button class="btn ghost block" onClick={() => { saveGame(g); setUI({ modal: null }); toast('💾 Игра сохранена', 'good'); }}>💾 Сохранить</button>
+        <button class="btn ghost block" onClick={() => { save(); setUI({ modal: null }); }}>💾 Сохранить · слот {activeSlot()}</button>
+        <button class="btn ghost block" onClick={() => downloadGame(g)}>⬇ Скачать сохранение файлом</button>
         <button class="btn ghost block" onClick={() => { setUI({ modal: null, tab: 'map' }); map.focusTile(REGIONS[g.countries[g.player].capital].center, 1.5); }}>🏛️ К столице</button>
-        {!confirmNew ? (
-          <button class="btn danger block" onClick={() => setConfirmNew(true)}>🔄 Новая игра</button>
-        ) : (
-          <button class="btn danger block" onClick={() => { deleteSave(); setUI({ modal: null, tab: 'map', tile: -1 }); map.setGame(null); setGame(null); }}>Точно? Прогресс будет удалён</button>
-        )}
+        <button class="btn ghost block" onClick={() => { save(); setUI({ modal: null, tab: 'map', tile: -1 }); map.setGame(null); setGame(null); }}>🏠 Главное меню — новая игра или другой слот</button>
       </div>
       <div class="card" style={{ marginTop: '12px' }}>
         <div class="row between audio-row">
@@ -253,6 +254,7 @@ function GameOver({ map }: { map: MapView }) {
         <div class="m-ic">💀</div>
         <h2>Держава пала</h2>
         <p>{COUNTRY_DEFS[g.player].name} потеряла все земли. Вы правили {g.day} дней.</p>
+        <button class="btn ghost block" style={{ marginBottom: '8px' }} onClick={() => downloadGame(g)}>⬇ Скачать партию на память</button>
         <button class="btn block" onClick={() => { deleteSave(); setUI({ modal: null, tab: 'map', tile: -1 }); map.setGame(null); setGame(null); }}>Начать заново</button>
       </div>
     </div>

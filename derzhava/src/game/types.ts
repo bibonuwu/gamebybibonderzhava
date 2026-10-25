@@ -8,6 +8,8 @@ export type Difficulty = 'easy' | 'normal' | 'hard';
 export type BudgetKey = 'edu' | 'health' | 'infra' | 'military';
 export type Sector = 'tech' | 'energy' | 'finance' | 'industry' | 'defense' | 'agro' | 'pharma';
 export type GeniusField = 'physics' | 'it' | 'medicine' | 'agro' | 'military' | 'econ';
+/** Сценарий партии (scenarios.ts): обычный мир, холодная война двух блоков или эпоха потрясений. */
+export type Scenario = 'classic' | 'coldwar' | 'turmoil';
 
 export interface CountryDef {
   id: string;
@@ -88,6 +90,9 @@ export interface Country {
     lastDemand?: number; lastCompany?: number; lastRichTax?: number;
     nextVote?: number; voteBias?: number; // выборы бота и вмешательство чужих спецслужб
     lastSpy?: number;
+    crisis?: number; // сколько дней страна в кризисе (rebels.ts): долгий кризис — распад
+    collapsed?: number; // день последнего распада
+    lastProxy?: number; // когда бот последний раз начинал войну чужими руками
   };
 }
 
@@ -145,6 +150,7 @@ export interface RegionState {
   pop: number;
   cap0: number;
   agri: number; // урожай региона без бонусов, т/день
+  ally?: number; // ничья земля помнит, кто помог ей отделиться: этой стране присоединение дешевле
 }
 
 export interface Building {
@@ -197,6 +203,21 @@ export interface Battle {
   start: number;
   end: number;
   naval: boolean;
+  guard?: number; // резервы, которые защитник перебросил в регион (после боя уцелевшие вернутся)
+}
+
+/** Мятеж в регионе (rebels.ts): местные повстанцы — иногда на деньги и оружие чужой страны. */
+export interface Rebellion {
+  id: number;
+  region: number;
+  country: number; // против кого
+  sponsor: number; // кто тайно вооружает (-1 — никто)
+  fighters: number;
+  since: number;
+  nextClash: number; // день следующей стычки с гарнизоном
+  wins: number; // побед над гарнизоном подряд: две — регион отделяется
+  exposed?: boolean; // заказчика раскрыли
+  cd?: number; // до этого дня новую карательную операцию не начать
 }
 
 /** Ракета с ядерной боеголовкой в полёте. */
@@ -421,6 +442,7 @@ export interface GameState {
   day: number;
   player: number;
   difficulty: Difficulty;
+  scenario?: Scenario; // нет — обычный мир
   countries: Country[];
   regions: RegionState[];
   /** Клетка → здание. Ставить и сносить — только putBuilding / removeBuilding (state.ts), обходить — allBuildings. */
@@ -428,6 +450,7 @@ export interface GameState {
   rel: number[][];
   pairs: Record<string, PairState>;
   battles: Battle[];
+  rebels: Rebellion[]; // мятежи (rebels.ts)
   missiles: Missile[];
   fallout: Record<number, number>; // регион → день, до которого держится радиоактивное заражение
   un: UNCase[]; // дела ООН об агрессии
