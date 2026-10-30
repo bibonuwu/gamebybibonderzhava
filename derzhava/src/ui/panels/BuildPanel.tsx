@@ -1,12 +1,12 @@
 import {
-  bestTileFor, buildCost, builderCost, builderError, builderLevel, startBuild, startUpgrade, upgradeBuilders, upgradeError,
+  bestTileFor, buildCost, builderCost, builderError, builderLevel, startBuild, startUpgrade, upgradeBuilders, upgradeError, upgradeGrowth,
 } from '../../game/actions';
 import { advise, applyAdvice, applyAllAdvice, GAIN, GOOD, optionFor, sectors, WEAK } from '../../game/advisor';
-import { BUILDER_NAMES, BUILDER_SPEED, BUILDERS_MAX, BUILDINGS, BUILDING_TYPES, TECH_BY_ID } from '../../game/defs';
+import { BUILDER_NAMES, BUILDER_SPEED, BUILDERS_MAX, BUILDINGS, BUILDING_TYPES, FOOTPRINT, TECH_BY_ID } from '../../game/defs';
 import { STATS } from '../../game/economy';
-import { fmt } from '../../game/format';
+import { fmt, fmtTiles } from '../../game/format';
 import { cancelMega, MEGA_BY_ID, megaError, megaNext, MEGAS, megaStages, startMega } from '../../game/megaprojects';
-import { emit, getGame } from '../../game/state';
+import { buildingSize, emit, getGame } from '../../game/state';
 import {
   cancelWonder, rivals, startWonder, WONDER_BY_ID, wonderCost, wonderError, wonderOwner, wonderProgress, WONDERS,
 } from '../../game/wonders';
@@ -25,11 +25,14 @@ export function BuildPanel({ map }: { map: MapView }) {
     .map(([k, b]) => ({ tile: +k, b }))
     .filter(({ tile }) => g.regions[REGION_OF[tile]].owner === g.player);
   const building = mine.filter((x) => x.b.progress > 0);
+  const errs = mine.map((x) => upgradeError(g, g.player, x.tile));
   const upgradable = mine
-    .filter((x) => !upgradeError(g, g.player, x.tile) || upgradeError(g, g.player, x.tile)?.startsWith('Одновременно'))
-    .map((x) => ({ ...x, cost: buildCost(g, g.player, x.b.type, x.b.level + 1, REGION_OF[x.tile]) }))
+    .filter((_, k) => !errs[k] || errs[k]!.startsWith('Одновременно'))
+    .map((x) => ({ ...x, cost: buildCost(g, g.player, x.b.type, x.b.level + 1, REGION_OF[x.tile]), grow: upgradeGrowth(g, x.tile) }))
     .sort((a, b) => a.cost - b.cost)
     .slice(0, 4);
+  // комплексы, которым некуда расти: вокруг всё занято
+  const cramped = errs.filter((e) => e?.startsWith('Тесно')).length;
 
   const show = (tile: number) => {
     setUI({ tab: 'map', tile });
@@ -49,13 +52,14 @@ export function BuildPanel({ map }: { map: MapView }) {
             <span class="big-ic">{BUILDINGS[b.type].icon}</span>
             <div class="grow">
               <div class="row between"><b>{BUILDINGS[b.type].name} ур. {b.level}</b><span class="small muted">{Math.ceil(b.progress / s.buildSpeed)} сек</span></div>
-              <div class="small muted">{REGIONS[REGION_OF[tile]].name}</div>
+              <div class="small muted">{REGIONS[REGION_OF[tile]].name} · {fmtTiles(buildingSize(b))}</div>
               <Bar value={1 - b.progress / b.total} />
             </div>
           </div>
         ))}
       </Card>
-      <Card title="🏗️ Новые здания" sub={`💰 ${fmt(c.money)}`} hint="Кнопка с ценой сама выберет лучшее место. Можно и вручную: нажмите на клетку своей страны на карте.">
+      <Card title="🏗️ Новые здания" sub={`💰 ${fmt(c.money)}`}
+        hint={`Каждое здание — комплекс: сразу занимает ${fmtTiles(FOOTPRINT[1])} рядом, а каждое улучшение пристраивает ещё одну (до ${FOOTPRINT[3]}). Каждая клетка комплекса работает как отдельное здание. Земля ограничена — оставляйте место для роста. Кнопка с ценой сама выберет лучшее место; можно и вручную: нажмите на клетку своей страны на карте.`}>
         {BUILDING_TYPES.map((type) => {
           const def = BUILDINGS[type];
           const tile = bestTileFor(g, g.player, type);
@@ -67,7 +71,7 @@ export function BuildPanel({ map }: { map: MapView }) {
               <div class="grow">
                 <div><b>{def.name}</b> <span class="muted small">· есть {s.counts[type]}</span></div>
                 <div class="small muted">{def.desc}</div>
-                {tile < 0 && <div class="small muted">{def.where}</div>}
+                {tile < 0 && <div class="small muted">{def.where} — и {FOOTPRINT[1] - 1} свободная клетка рядом</div>}
               </div>
               <button
                 class="btn sm"
@@ -85,20 +89,25 @@ export function BuildPanel({ map }: { map: MapView }) {
       </Card>
       <Wonders />
       <Megaprojects />
-      <Card title="⬆️ Улучшения" hint="Уровни 2 и 3 открываются технологиями во вкладке «Политика → Наука».">
+      <Card title="⬆️ Улучшения" hint="Уровни 2 и 3 открываются технологиями во вкладке «Политика → Наука». Улучшение поднимает уровень всех клеток комплекса и пристраивает к нему ещё клетку — рядом должно быть свободно.">
         {upgradable.length === 0 && <div class="small muted">Пока нечего улучшать.</div>}
-        {upgradable.map(({ tile, b, cost }) => (
+        {upgradable.map(({ tile, b, cost, grow }) => (
           <div class="list-item" key={tile}>
             <span class="big-ic">{BUILDINGS[b.type].icon}</span>
             <div class="grow tap" onClick={() => show(tile)}>
               <div><b>{BUILDINGS[b.type].name}</b> ур. {b.level} → {b.level + 1}</div>
-              <div class="small muted">{REGIONS[REGION_OF[tile]].name}</div>
+              <div class="small muted">{REGIONS[REGION_OF[tile]].name} · {fmtTiles(buildingSize(b))}{grow > 0 && <span class="up"> +{grow}</span>}</div>
             </div>
             <button class="btn sm" disabled={c.money < cost || s.constructing >= s.slots} onClick={() => report(startUpgrade(g, g.player, tile), `⬆️ Улучшение началось`)}>
               💰 {fmt(cost)}
             </button>
           </div>
         ))}
+        {cramped > 0 && (
+          <div class="small muted" style={{ marginTop: '6px' }}>
+            🧱 Тесно: {cramped} {cramped === 1 ? 'зданию' : 'зданиям'} некуда расти — вокруг всё занято. Снесите соседнее здание или присоедините новую землю.
+          </div>
+        )}
       </Card>
     </>
   );

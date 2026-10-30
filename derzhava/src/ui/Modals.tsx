@@ -1,7 +1,9 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
+import { SG_EVENT } from '../game/assembly';
 import { STATS } from '../game/economy';
 import { resolveEvent } from '../game/events';
+import { isSessionEvent } from '../game/session';
 import { fmt, fmtDate } from '../game/format';
 import { claimQuest, questIcon, questProgress, questText, SKIP_COOLDOWN, skipQuest } from '../game/quests';
 import { activeSlot, deleteSave, saveGame } from '../game/save';
@@ -20,7 +22,11 @@ import { cycleSpeed, prefs, report, setPrefs, setUI, ui, useStore } from './stor
 
 const EVENT_TAG: Record<string, string> = {
   event: '📜 Событие', demand: '📢 Голос народа', un: '🌐 Совет Безопасности ООН', lodge: '👁️ Тайная ложа', election: '🗳️ Выборы', debt: '🏦 Финансы',
+  session: '🌐 Генассамблея ООН · чрезвычайная сессия', sg: '🌐 Генеральная Ассамблея ООН',
 };
+/** Подпись окна: у ООН их три — Совбез, выборы Генсека и чрезвычайная сессия. */
+const tagOf = (ev: { id: string; kind?: string }) =>
+  EVENT_TAG[isSessionEvent(ev.id) ? 'session' : ev.id === SG_EVENT ? 'sg' : ev.kind ?? 'event'];
 
 export function Modals({ map }: { map: MapView }) {
   useStore();
@@ -36,7 +42,7 @@ export function Modals({ map }: { map: MapView }) {
             <i class="ev-rays" />
             <span class="ev-medal"><span>{ev.icon}</span></span>
           </div>
-          <div class="demand-tag">{EVENT_TAG[ev.kind ?? 'event']}</div>
+          <div class="demand-tag">{tagOf(ev)}</div>
           <h2>{ev.title}</h2>
           <p class="ev-text">{ev.text}</p>
           {ev.options.map((o, i) => (

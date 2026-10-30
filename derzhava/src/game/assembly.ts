@@ -3,7 +3,8 @@
 // голосуют все страны (по отношению к автору и к цели), решает большинство. Братья своей ложи игрока голосуют
 // вместе с ним. Раз в пять лет избирают Генсека: постоянный член Совбеза может наложить вето на кандидата,
 // Генассамблея выбирает из оставшихся. Генсек — престиж, вес в голосованиях и дешёвые резолюции.
-// Дела об агрессии, Совбез и санкции — в un.ts.
+// Дела об агрессии, Совбез и санкции — в un.ts; чрезвычайные сессии после важных решений стран — в session.ts
+// (они голосуются здесь же, как обычные резолюции).
 import { addRel, atWar, cname, makePeace, peekPair } from './actions';
 import { computeAll, STATS } from './economy';
 import { fmt } from './format';
@@ -12,6 +13,7 @@ import { aidLoyal } from './megaprojects';
 import { arsenalOf, hbombsOf, nukesOf } from './nuclear';
 import { incomeNow } from './prosperity';
 import { inOrder } from './order';
+import { awaiting, SESSION_BY_ID, sessionTallied, tickSessions } from './session';
 import { banner, log, news, pick, rand, sfx } from './state';
 import type { AssemblyState, GameState, GAVote, Personality, TempMod, UNResolution } from './types';
 import { countriesN, isAggressor, P5 } from './un';
@@ -40,7 +42,7 @@ export function initAssembly(g: GameState): AssemblyState {
   const pool = g.countries.filter((c) => c.alive && c.idx !== g.player && !P5.includes(c.idx)).map((c) => c.idx);
   return {
     sg: pool.length ? pick(g, pool) : -1, sgSince: g.day, nextSG: g.day + 700 + Math.floor(rand(g) * 300),
-    res: [], cd: {}, nextBot: g.day + 200 + Math.floor(rand(g) * 150),
+    res: [], cd: {}, nextBot: g.day + 200 + Math.floor(rand(g) * 150), sanctions: [],
   };
 }
 
@@ -142,7 +144,9 @@ export const RESOLUTIONS: ResDef[] = [
       const t = r.target!;
       if (k === t) return -100;
       if (peekPair(g, k, t).alliance) return -40;
-      return (g.rel[k][r.by] - g.rel[k][t]) / 2 + (isAggressor(g, t) ? 30 : 0) + (atWar(g, k, t) ? 40 : 0);
+      // ложа дисциплинированна: брата не осуждают, а осуждение, внесённое братом, поддерживают
+      const lodge = isMember(g, k) ? (isMember(g, t) ? -30 : isMember(g, r.by) ? 20 : 0) : 0;
+      return (g.rel[k][r.by] - g.rel[k][t]) / 2 + (isAggressor(g, t) ? 30 : 0) + (atWar(g, k, t) ? 40 : 0) + lodge;
     },
     pass: (g, r, yes) => {
       const t = r.target!;
@@ -225,9 +229,11 @@ export const RESOLUTIONS: ResDef[] = [
     yesHint: () => 'на 2 года: выбросы −15%, урожай +5%, стабильность +2, производство −2%' },
 ];
 export const RES_BY_ID = Object.fromEntries(RESOLUTIONS.map((r) => [r.id, r])) as Record<string, ResDef>;
+/** Резолюция любого вида: внесённая страной или чрезвычайной сессии (session.ts). */
+export const resDef = (kind: string): ResDef | undefined => RES_BY_ID[kind] ?? SESSION_BY_ID[kind];
 
 export function resTitle(g: GameState, r: Pick<UNResolution, 'kind' | 'target' | 'target2'>) {
-  const def = RES_BY_ID[r.kind];
+  const def = resDef(r.kind);
   const who = r.target === undefined ? '' : `: ${cname(g, r.target)}${r.target2 !== undefined ? ` — ${cname(g, r.target2)}` : ''}`;
   return `${def?.icon ?? '📜'} ${def?.name ?? 'Резолюция'}${who}`;
 }
@@ -256,7 +262,10 @@ function voteOf(g: GameState, k: number, r: UNResolution, def: ResDef, noise = 0
       if (g.order!.official) return mv;
       s += 30 * dir;
     }
-    if (g.lodge.status === 'member' && isMember(g, k)) s += 12 * dir; // братья «Всевидящего ока» тоже помнят о нас
+    if (g.lodge.status === 'member' && isMember(g, k)) {
+      if (r.bloc) return mv; // услуга ложи «Голоса братьев»
+      s += 12 * dir; // братья «Всевидящего ока» тоже помнят о нас
+    }
     if (isSG(g)) s += 10 * dir; // вес Генсека
     if (aidLoyal(g, k, me)) s += 22 * dir; // помним нашу программу развития
     if (r.lobby?.includes(k)) s += 45 * dir; // нас «убедили»
@@ -264,24 +273,29 @@ function voteOf(g: GameState, k: number, r: UNResolution, def: ResDef, noise = 0
   return s > THRESHOLD ? 'yes' : s < -THRESHOLD ? 'no' : 'abstain';
 }
 
+/** Кто как проголосует; noise — случайный разброс настоящего голосования. */
+export function votesOf(g: GameState, r: UNResolution, noise = false) {
+  const def = resDef(r.kind)!;
+  const yes: number[] = [], no: number[] = [];
+  for (const k of alive(g)) {
+    const v = voteOf(g, k, r, def, noise ? (rand(g) - 0.5) * 12 : 0);
+    if (v === 'yes') yes.push(k);
+    else if (v === 'no') no.push(k);
+  }
+  return { yes, no, pass: yes.length > no.length && yes.length >= 3 };
+}
+
 /** Прогноз голосования (без случайности). */
 export function forecastRes(g: GameState, r: UNResolution) {
-  const def = RES_BY_ID[r.kind];
-  let yes = 0, no = 0, abstain = 0;
-  for (const k of alive(g)) {
-    const v = voteOf(g, k, r, def);
-    if (v === 'yes') yes++;
-    else if (v === 'no') no++;
-    else abstain++;
-  }
-  return { yes, no, abstain, pass: yes > no && yes >= 3 };
+  const v = votesOf(g, r);
+  return { yes: v.yes.length, no: v.no.length, abstain: alive(g).length - v.yes.length - v.no.length, pass: v.pass };
 }
 
 /** Черновик резолюции игрока — для прогноза до внесения. */
 export const draft = (g: GameState, kind: string, t?: number, t2?: number): UNResolution =>
   ({ id: -1, kind, by: g.player, target: t, target2: t2, day: g.day, vote: g.day + VOTE_DAYS, myVote: 'yes' });
 
-function submit(g: GameState, kind: string, by: number, days: number, t?: number, t2?: number): UNResolution {
+export function submit(g: GameState, kind: string, by: number, days: number, t?: number, t2?: number): UNResolution {
   const r: UNResolution = { id: g.nextId++, kind, by, target: t, target2: t2, day: g.day, vote: g.day + days };
   g.assembly.res.unshift(r);
   return r;
@@ -291,7 +305,7 @@ export function proposeError(g: GameState, kind: string, t?: number, t2?: number
   const def = RES_BY_ID[kind];
   const me = g.player;
   if (!def) return 'Нет такой резолюции';
-  if (pending(g).some((r) => r.by === me)) return 'Наша резолюция уже на голосовании';
+  if (pending(g).some((r) => r.by === me && !r.session)) return 'Наша резолюция уже на голосовании';
   const wait = resWait(g, def);
   if (wait > 0) return `Снова можно через ${wait} дн.`;
   if (g.countries[me].money < resCost(g, def)) return 'Не хватает денег';
@@ -330,7 +344,7 @@ export const lobbyCost = (g: GameState, k: number) => incomeNow(g, k) * 20;
 /** Кого можно уговорить голосовать как мы: сейчас голосуют иначе, но не упираются. */
 export function lobbyTargets(g: GameState, r: UNResolution): number[] {
   const mv = myDir(g, r);
-  const def = RES_BY_ID[r.kind];
+  const def = resDef(r.kind);
   if (!mv || !def || r.passed !== undefined) return [];
   return alive(g).filter((k) => {
     if (k === g.player || k === r.by || k === r.target || k === r.target2 || r.lobby?.includes(k)) return false;
@@ -375,12 +389,13 @@ export function castVote(g: GameState, id: number, v: GAVote): string | null {
   const r = g.assembly.res.find((x) => x.id === id);
   if (!r || r.passed !== undefined) return 'Голосование уже закончилось';
   if (r.by === g.player) return 'Это наша резолюция — мы, конечно, «за»';
+  if (r.target === g.player && r.session) return 'Сессия — о нас: мы, конечно, «против»';
   r.myVote = v;
   return null;
 }
 
 function tally(g: GameState, r: UNResolution) {
-  const def = RES_BY_ID[r.kind];
+  const def = resDef(r.kind);
   const me = g.player;
   const title = resTitle(g, r);
   const mine = r.by === me || r.target === me || r.target2 === me;
@@ -391,26 +406,23 @@ function tally(g: GameState, r: UNResolution) {
     if (mine) log(g, `🌐 Резолюция «${title}» снята с голосования: она потеряла смысл`, 'info', false);
     return;
   }
-  const yes: number[] = [], no: number[] = [];
-  for (const k of alive(g)) {
-    const v = voteOf(g, k, r, def, (rand(g) - 0.5) * 12);
-    if (v === 'yes') yes.push(k);
-    else if (v === 'no') no.push(k);
-  }
+  const { yes, no, pass } = votesOf(g, r, true);
   r.yes = yes;
   r.no = no;
-  r.passed = yes.length > no.length && yes.length >= 3;
+  r.passed = pass;
   // автор помнит, кто его поддержал
   if (r.by !== me && r.myVote === 'yes') addRel(g, me, r.by, 4);
   if (r.by !== me && r.myVote === 'no') addRel(g, me, r.by, -4);
+  if (r.session) sessionTallied(g, r);
   const score = `${yes.length} за, ${no.length} против`;
+  const who = r.session ? 'Чрезвычайная сессия ООН' : 'Генассамблея';
   const text = r.passed
-    ? `✅ Генассамблея приняла резолюцию «${title}» (${score}): ${def.pass(g, r, yes)}`
-    : `❌ Генассамблея отклонила резолюцию «${title}» (${score})`;
+    ? `✅ ${who} приняла резолюцию «${title}» (${score}): ${def.pass(g, r, yes)}`
+    : `❌ ${who} отклонила резолюцию «${title}» (${score})`;
   if (!r.passed) def.fail?.(g, r);
   if (r.by === me && r.passed) g.counters.unResPassed = (g.counters.unResPassed ?? 0) + 1;
   if (mine) {
-    const good = r.kind === 'condemn' && r.target === me ? !r.passed : r.passed;
+    const good = (r.kind === 'condemn' || r.session) && r.target === me ? !r.passed : r.passed;
     sfx(good ? 'treaty' : 'alarm');
     log(g, `🌐 ${text}`, good ? 'good' : 'bad', false);
     banner({ icon: '🌐', title: r.passed ? 'Резолюция принята' : 'Резолюция отклонена', text: `${title} — ${score}`, kind: good ? 'good' : 'war' });
@@ -424,7 +436,7 @@ function botProposal(g: GameState) {
   const A = g.assembly;
   const me = g.player;
   A.nextBot = g.day + 160 + Math.floor(rand(g) * 160);
-  if (pending(g).some((r) => r.by !== me)) return; // одна чужая резолюция за раз
+  if (pending(g).some((r) => r.by !== me && !r.session)) return; // одна чужая резолюция за раз
   const bots = alive(g).filter((k) => k !== me);
   if (bots.length < 2) return;
   const opts: { by: number; kind: string; t?: number; t2?: number; w: number }[] = [];
@@ -456,11 +468,18 @@ function botProposal(g: GameState) {
   if (!opts.length) return;
   let x = rand(g) * opts.reduce((s, o) => s + o.w, 0);
   const o = opts.find((p) => (x -= p.w) <= 0) ?? opts[opts.length - 1];
-  const r = submit(g, o.kind, o.by, BOT_VOTE_DAYS, o.t, o.t2);
+  botResolution(g, o.kind, o.by, o.t, o.t2);
+}
+
+/** Бот вносит резолюцию — например, по просьбе ложи (lodge.ts). */
+export function botResolution(g: GameState, kind: string, by: number, t?: number, t2?: number) {
+  const me = g.player;
+  const r = submit(g, kind, by, BOT_VOTE_DAYS, t, t2);
   const vs = r.target === me || r.target2 === me;
   if (vs) sfx('alarm');
-  log(g, `🌐 Генассамблея: ${cname(g, o.by)} вносит резолюцию «${resTitle(g, r)}». Наш голос — во вкладке «Армия → 🌐 ООН», голосование через ${BOT_VOTE_DAYS} дн.`,
+  log(g, `🌐 Генассамблея: ${cname(g, by)} вносит резолюцию «${resTitle(g, r)}». Наш голос — во вкладке «Армия → 🌐 ООН», голосование через ${BOT_VOTE_DAYS} дн.`,
     vs && r.kind === 'condemn' ? 'bad' : 'info', vs);
+  return r;
 }
 
 // ---------- Генеральный секретарь ----------
@@ -606,7 +625,8 @@ export function tickAssembly(g: GameState) {
     A.sg = -1;
     A.nextSG = Math.min(A.nextSG, g.day + 30);
   }
-  for (const r of A.res) if (r.passed === undefined && g.day >= r.vote) tally(g, r);
+  tickSessions(g);
+  for (const r of A.res) if (r.passed === undefined && g.day >= r.vote && !awaiting(g, r)) tally(g, r);
   // архив: всё, что ещё голосуется, и последние решённые
   let kept = 0;
   A.res = A.res.filter((r) => r.passed === undefined || kept++ < KEEP);

@@ -7,7 +7,7 @@ import {
 import { megaMods } from './megaprojects';
 import { autoPenalty, climateFear, climateFoodLoss, elderly, initLate } from './prosperity';
 import { REGION_LITH, REGION_OIL, resourceStats } from './resources';
-import { allBuildings } from './state';
+import { allBuildings, buildingWorking } from './state';
 import type { BuildingType, Country, GameState, Sector } from './types';
 import { wonderMods } from './wonders';
 import { COUNTRY_DEFS, REGIONS, REGION_OF } from './world';
@@ -16,7 +16,8 @@ export interface CountryStats {
   regions: number[];
   civPop: number;
   wSum: number;
-  counts: Record<BuildingType, number>;
+  counts: Record<BuildingType, number>; // зданий-комплексов
+  area: Record<BuildingType, number>; // сколько клеток они занимают (вместе со стройками)
   coverage: Record<BuildingType, number>;
   constructing: number;
   slots: number;
@@ -87,6 +88,8 @@ export interface CountryStats {
   lithNeed: number;
   resMoney: number; // продажа излишков сырья (+) или закупка недостающего (−), 💰/сек
   resShort: number; // на сколько упало производство из-за нехватки сырья в мире (0…0.3)
+  oilDraw: number; // сколько нефти в день берём из стратегического резерва (exchange.ts)
+  lithDraw: number;
   emis: number; // выбросы: доля от мировых в начале эпохи
 }
 
@@ -177,7 +180,8 @@ export function sanctionLoss(g: GameState, x: number, by: ReadonlySet<number>) {
   return SANCTION_MAX * Math.min(1, w / Math.max(1, world));
 }
 
-/** Санкции против каждой страны: пока агрессор воюет — в полную силу, за непризнанный захват — вполовину. */
+/** Санкции против каждой страны: пока агрессор воюет — в полную силу, за непризнанный захват — вполовину;
+ *  санкции чрезвычайных сессий ООН — со своей силой (session.ts). */
 function sanctionPenalty(g: GameState, n: number): number[] {
   const out: number[] = new Array(n).fill(0);
   const by = new Map<number, { set: Set<number>; k: number }>();
@@ -187,6 +191,12 @@ function sanctionPenalty(g: GameState, n: number): number[] {
     for (const s of cs.sanctions) e.set.add(s);
     if (cs.until === undefined) e.k = 1;
     by.set(cs.aggressor, e);
+  }
+  for (const s of g.assembly?.sanctions ?? []) {
+    const e = by.get(s.target) ?? { set: new Set<number>(), k: 0 };
+    for (const k of s.by) e.set.add(k);
+    e.k = Math.max(e.k, s.k);
+    by.set(s.target, e);
   }
   for (const [x, e] of by) out[x] = sanctionLoss(g, x, e.set) * e.k;
   return out;
@@ -212,7 +222,7 @@ export function computeAll(g: GameState) {
   const stats: CountryStats[] = [];
   for (let i = 0; i < n; i++) {
     stats.push({
-      regions: [], civPop: 0, wSum: 0, counts: { ...ZERO_COUNTS }, coverage: { ...ZERO_COUNTS }, constructing: 0, slots: 2, buildSpeed: 1,
+      regions: [], civPop: 0, wSum: 0, counts: { ...ZERO_COUNTS }, area: { ...ZERO_COUNTS }, coverage: { ...ZERO_COUNTS }, constructing: 0, slots: 2, buildSpeed: 1,
       mods: BASE_MODS, prod: 0, taxIncome: 0, factoryIncome: 0, portIncome: 0, tradeIncome: 0, budgetCost: 0, birthCost: 0,
       upkeepBuildings: 0, upkeepArmy: 0, moneyRate: 0, brainsBase: 0, brainsUni: 0, brainsRate: 0, growthYear: 0, popRate: 0,
       popCap: 0, stabTarget: 50, stabParts: [], weapons: 1, morale: 1, quality: 1, power: 0, barracksMult: 1, tradePartners: 0, tradeMult: 1,
@@ -220,7 +230,7 @@ export function computeAll(g: GameState) {
       companies: 0, corpValue: 0, sectorUnits: { ...ZERO_SECTORS }, geniuses: 0,
       foodProd: 0, foodCons: 0, foodBuy: 0, foodSell: 0, foodMoney: 0, hunger: 0, sanctions: 0, sanctionLoss: 0,
       lodgeDues: 0, lodgeTithe: 0, debtInterest: 0, intelCost: 0,
-      pensionCost: 0, safetyCost: 0, greenCost: 0, oilProd: 0, oilNeed: 0, lithProd: 0, lithNeed: 0, resMoney: 0, resShort: 0, emis: 0,
+      pensionCost: 0, safetyCost: 0, greenCost: 0, oilProd: 0, oilNeed: 0, lithProd: 0, lithNeed: 0, resMoney: 0, resShort: 0, oilDraw: 0, lithDraw: 0, emis: 0,
     });
   }
   const sanc = sanctionPenalty(g, n);
@@ -256,6 +266,7 @@ export function computeAll(g: GameState) {
   const portLevels: number[] = new Array(n).fill(0);
   const T = BUILDING_TYPES.length;
   const counts = new Int32Array(n * T);
+  const area = new Int32Array(n * T);
   const coverage = new Float64Array(n * T);
   const { tiles, list } = allBuildings(g);
   for (let k = 0; k < tiles.length; k++) {
@@ -266,7 +277,9 @@ export function computeAll(g: GameState) {
     if (owner < 0) continue;
     const s = stats[owner];
     const ti = TYPE_INDEX[b.type];
+    const ext = b.tiles;
     counts[owner * T + ti]++;
+    area[owner * T + ti] += 1 + (ext?.length ?? 0);
     if (b.progress > 0 && b.level === 1) {
       s.constructing++;
       continue;
@@ -274,18 +287,27 @@ export function computeAll(g: GameState) {
     if (b.progress > 0) s.constructing++;
     const lvl = b.progress > 0 ? b.level - 1 : b.level;
     const eff = LEVEL_EFFECT[lvl];
-    const w = REGION_W[rid];
-    coverage[owner * T + ti] += eff * w;
-    s.upkeepBuildings += UPKEEP[ti] * lvl * w * g.countries[owner].baseProd;
-    if (ti === T_FACTORY) factoryW[owner] += eff * w;
-    else if (ti === T_PORT) { portW[owner] += eff * w; portLevels[owner] += eff; PORT_TILES[owner].push(tile); }
-    else if (ti === T_UNIVERSITY) uniW[owner] += eff * w;
-    else if (ti === T_FARM) REGION_FARM[rid] += eff;
-    else if (ti === T_FORTRESS) REGION_FORT[rid] = Math.max(REGION_FORT[rid], eff);
+    const up = UPKEEP[ti] * lvl * g.countries[owner].baseProd;
+    // комплекс: каждая готовая клетка работает как здание его уровня (в весе своего региона)
+    const work = buildingWorking(b);
+    for (let j = 0; j < work; j++) {
+      const t = j === 0 ? tile : ext![j - 1];
+      const r = REGION_OF[t];
+      if (g.regions[r].owner !== owner) continue;
+      const w = REGION_W[r];
+      coverage[owner * T + ti] += eff * w;
+      s.upkeepBuildings += up * w;
+      if (ti === T_FACTORY) factoryW[owner] += eff * w;
+      else if (ti === T_PORT) { portW[owner] += eff * w; portLevels[owner] += eff; if (j === 0) PORT_TILES[owner].push(tile); }
+      else if (ti === T_UNIVERSITY) uniW[owner] += eff * w;
+      else if (ti === T_FARM) REGION_FARM[r] += eff;
+      else if (ti === T_FORTRESS) REGION_FORT[r] = Math.max(REGION_FORT[r], eff);
+    }
   }
   for (let i = 0; i < n; i++) {
     for (let t = 0; t < T; t++) {
       stats[i].counts[BUILDING_TYPES[t]] = counts[i * T + t];
+      stats[i].area[BUILDING_TYPES[t]] = area[i * T + t];
       stats[i].coverage[BUILDING_TYPES[t]] = coverage[i * T + t];
     }
   }

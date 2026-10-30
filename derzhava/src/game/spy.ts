@@ -7,7 +7,7 @@ import { addRel, cname, enemiesOf, pair } from './actions';
 import { BUILDINGS, INTEL_COST, TECH_BY_ID } from './defs';
 import { computeAll, STATS } from './economy';
 import { fmt } from './format';
-import { allBuildings, fx, log, mapDirty, news, pick, rand, removeBuilding, sfx } from './state';
+import { allBuildings, fx, log, mapDirty, news, pick, rand, removeBuilding, ruinTile, sfx } from './state';
 import type { BuildingType, GameState, IntelState, Personality } from './types';
 import { COUNTRY_DEFS, REGIONS, REGION_OF } from './world';
 
@@ -133,13 +133,16 @@ export const SPY_OPS: SpyOp[] = [
     run: (g, _a, b) => {
       const tile = pick(g, sabTargets(g, b));
       const bl = g.buildings[tile];
-      const broken = bl.level <= 1;
-      if (broken) removeBuilding(g, tile);
+      // у комплекса взрывают один корпус, одиночное здание теряет уровень или рушится
+      const wing = bl.tiles?.length ? pick(g, bl.tiles) : -1;
+      const broken = wing < 0 && bl.level <= 1;
+      if (wing >= 0) ruinTile(g, wing);
+      else if (broken) removeBuilding(g, tile);
       else bl.level--;
       g.countries[b].arms *= 0.9;
       mapDirty.buildings = true;
-      fx({ kind: 'flash', tile, color: 0xff6a3d });
-      detail = `здание «${BUILDINGS[bl.type].name}» в регионе ${REGIONS[REGION_OF[tile]].name} ${broken ? 'разрушено до основания' : 'повреждено'}`;
+      fx({ kind: 'flash', tile: wing >= 0 ? wing : tile, color: 0xff6a3d });
+      detail = `здание «${BUILDINGS[bl.type].name}» в регионе ${REGIONS[REGION_OF[tile]].name} ${wing >= 0 ? 'лишилось корпуса' : broken ? 'разрушено до основания' : 'повреждено'}`;
       return `Диверсия удалась (страна ${cname(g, b)}): ${detail}, арсенал −10%`;
     } },
   { id: 'scientist', icon: '🧑‍🔬', name: 'Переманить учёного', need: 30, days: 30, base: 0.5, cd: 150,

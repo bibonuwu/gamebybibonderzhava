@@ -10,7 +10,9 @@ const RUNS = [
   ['scripts/politics-test.ts', '2000', 'de'],
   ['scripts/lodge-test.ts', '2000', 'fr', 'join'],
   ['scripts/order-un-test.ts', '2000', 'gb'],
+  ['scripts/session-test.ts', '2500', 'de'],
   ['scripts/nuke-test.ts', '3000', 'us'],
+  ['scripts/complex-test.ts', '1500', 'kz'],
 ];
 
 let failed = 0;

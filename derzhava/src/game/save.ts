@@ -118,6 +118,7 @@ function migrate(g: GameState) {
   g.rebels ??= [];
   g.lodge ??= initLodge(g);
   g.assembly ??= initAssembly(g);
+  g.assembly.sanctions ??= []; // санкции чрезвычайных сессий ООН (session.ts)
   g.elections ??= initElections(g);
   g.intel ??= initIntel(g);
   g.finance ??= { base: BASE_RATE, shock: 0, nextCrisis: g.day + 1800 };

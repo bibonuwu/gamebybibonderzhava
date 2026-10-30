@@ -75,6 +75,7 @@ export interface Country {
   nukeBuild?: { left: number; total: number; thermo?: boolean }; // сборка боеголовки (thermo — термоядерной бомбы)
   nukeTested?: boolean; // первое испытание проведено
   hbombTested?: boolean; // первое термоядерное испытание проведено
+  nukeFreeze?: number; // до этого дня мораторий ООН: сборки боеголовок нет (страна выполнила требование сессии)
   // госдолг (debt.ts)
   debt?: number; // облигации на рынке
   debtRate?: number; // годовая ставка по ним — от кредитного рейтинга
@@ -91,6 +92,10 @@ export interface Country {
   pensionReform?: number; // сколько раз поднимали пенсионный возраст
   green?: number; // зелёный курс 0…2
   safety?: number; // защита от безработицы из-за роботов 0…2
+  // биржа (exchange.ts)
+  oilStock?: number; // стратегический резерв нефти, млн барр.: закрывает мировой дефицит
+  lithStock?: number; // резерв лития, тыс. т
+  gold?: number; // золотой запас, т
   cd?: Record<string, number>; // народная программа, реформа → день, когда снова можно
   // мегапроекты (megaprojects.ts)
   mega?: MegaBuild; // идёт стройка этапа
@@ -105,6 +110,7 @@ export interface Country {
     collapsed?: number; // день последнего распада
     lastProxy?: number; // когда бот последний раз начинал войну чужими руками
     saveMega?: number; // до этого дня бот копит на мегапроект: меньше тратит на стройку и чудеса
+    unWait?: number; // до этого дня бот не решается на то, за что соберут сессию ООН (session.ts)
   };
 }
 
@@ -156,6 +162,13 @@ export interface ResourceState {
   level: number; // индекс мировых цен
 }
 
+/** Биржа (exchange.ts): мировой рынок золота и счёт игрока. */
+export interface ExchangeState {
+  gold: MarketGood;
+  fear: number; // страх на рынках (1 — спокойно): войны и кризисы гонят цену золота вверх
+  basis: Record<string, number>; // товар → сколько игрок заплатил за то, что сейчас лежит на счёте
+}
+
 /** Мировые потрясения поздней игры: кризисы идут всё чаще (resources.ts). */
 export interface CrisisState {
   next: number;
@@ -191,6 +204,7 @@ export interface ElectionState {
   trust: number; // доверие: сдержанные и нарушенные обещания, скандалы — со временем забывается
   cd: Record<string, number>; // действие кампании → день, когда снова можно
   rigged?: number; // «дорисовано» голосов
+  observers?: number; // до этого дня на выборах наблюдатели ООН: подтасовать или отменить нельзя
   campaign?: boolean; // кампания объявлена
   coalition?: { party: string; until: number }; // проиграли — условия партии-победителя
   last?: { day: number; ours: number; won: boolean };
@@ -219,11 +233,17 @@ export interface RegionState {
   ally?: number; // ничья земля помнит, кто помог ей отделиться: этой стране присоединение дешевле
 }
 
+/**
+ * Здание — комплекс из нескольких соседних клеток своей страны: главная клетка — ключ в g.buildings, остальные — в tiles.
+ * Каждая готовая клетка работает как отдельное здание того же уровня; улучшение пристраивает ещё клетку (FOOTPRINT).
+ */
 export interface Building {
   type: BuildingType;
   level: number;
   progress: number; // сек до готовности (0 — готово)
   total: number;
+  tiles?: number[]; // пристройки — остальные клетки комплекса (нет — старое здание в одну клетку)
+  add?: number; // сколько последних клеток из tiles ещё строится (идёт улучшение)
 }
 
 export interface PairState {
@@ -399,6 +419,7 @@ export interface LodgeState {
   nextElection: number;
   electionAsked?: boolean;
   nextPlot: number; // тайные дела ботов-братьев и происки ложи против тех, кто её запретил
+  nextPlea?: number; // когда брат в беде снова попросит игрока о помощи (письмом)
 }
 
 /** Своя ложа игрока (order.ts): игрок — основатель и бессменный Великий мастер. */
@@ -422,7 +443,7 @@ export interface UNResolution {
   kind: string;
   by: number; // кто внёс
   target?: number; // страна, о которой резолюция
-  target2?: number; // вторая сторона войны (миротворцы)
+  target2?: number; // вторая сторона войны (миротворцы) или пострадавшая страна (чрезвычайная сессия)
   day: number; // внесена
   vote: number; // день голосования
   myVote?: GAVote; // голос игрока
@@ -430,6 +451,29 @@ export interface UNResolution {
   no?: number[];
   passed?: boolean;
   lobby?: number[]; // страны, которых игрок уговорил (и щедро отблагодарил) голосовать как он
+  bloc?: boolean; // услуга ложи «Голоса братьев»: братья «Всевидящего ока» голосуют ровно как игрок
+  // чрезвычайная сессия (session.ts): созвана сама — после важного решения страны target
+  session?: boolean;
+  note?: string; // повод: «первое ядерное испытание», «отмена выборов»…
+  gov?: GovType; // строй до переворота — его требуют вернуть
+  asked?: boolean; // окно сессии игроку уже показано
+  speech?: number; // речь обвиняемой страны: больше нуля — убедила колеблющихся, меньше — провалилась
+  defiant?: boolean; // обвиняемая страна демонстративно игнорирует ООН
+  complied?: boolean; // обвиняемая выполнила требование до голосования
+}
+
+/** Санкции ООН по итогам чрезвычайной сессии (session.ts): до срока или пока страна не выполнит требование. */
+export interface UNSanctions {
+  id: number;
+  kind: string; // вид сессии
+  target: number;
+  by: number[]; // ввели санкции
+  since: number;
+  until: number;
+  k: number; // сила: 1 — как против агрессора
+  embargo?: boolean; // эмбарго на оружие
+  victim?: number; // пострадавшая страна: ей идут репарации
+  gov?: GovType; // строй до переворота
 }
 
 /** ООН как организация: Генсек и Генассамблея. Дела об агрессии и Совбез — в g.un (un.ts). */
@@ -442,6 +486,7 @@ export interface AssemblyState {
   res: UNResolution[]; // на голосовании и недавние, свежие — первыми
   cd: Record<string, number>; // вид резолюции → день, когда игрок снова может внести такую
   nextBot: number; // когда боты внесут свою резолюцию
+  sanctions: UNSanctions[]; // санкции по итогам чрезвычайных сессий
 }
 
 export interface PendingEvent {
@@ -531,6 +576,7 @@ export interface GameState {
   climate?: ClimateState; // климат планеты (prosperity.ts)
   res?: ResourceState; // нефть и литий (resources.ts)
   crises?: CrisisState; // мировые потрясения (resources.ts)
+  exchange?: ExchangeState; // биржа: золото и счёт игрока (exchange.ts)
   aid?: AidProgram[]; // программы развития (megaprojects.ts)
   firsts?: Record<string, number>; // космическая гонка: этап → кто сделал его первым
   nextId: number;

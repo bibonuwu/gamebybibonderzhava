@@ -18,6 +18,7 @@ import { brothers, visibleMembers } from '../../game/lodge';
 import { aidCost as devAidCost, aidDonors, aidError, AID_MEMORY, AID_NOT_POOR, aidLoyal, startAid } from '../../game/megaprojects';
 import { inOrder, invite, inviteCost, inviteError, joinChance } from '../../game/order';
 import { nearCollapse, rebelsIn } from '../../game/rebels';
+import { sanctionsOn, SESSION_BY_ID } from '../../game/session';
 import { hasDeposit, oilDepletion, REGION_LITH, REGION_OIL } from '../../game/resources';
 import { dossier, netOf, watched } from '../../game/spy';
 import { WONDER_BY_ID, wondersOf } from '../../game/wonders';
@@ -150,6 +151,11 @@ export function CountryDialog({ id }: { id: number }) {
       {isAggressor(g, id) && (
         <p class="small down" style={{ marginTop: '-6px' }}>
           🌐 Агрессор: напала на {victimsOf(g, id).map((v) => COUNTRY_DEFS[v].name).join(', ')}{s.sanctions > 0 && ` · санкции −${Math.round(s.sanctions * 100)}% производства`}
+        </p>
+      )}
+      {sanctionsOn(g, id).length > 0 && (
+        <p class="small down" style={{ marginTop: '-6px' }}>
+          🚫 Санкции ООН: {sanctionsOn(g, id).map((x) => SESSION_BY_ID[x.kind]?.name.toLowerCase()).join(', ')} · −{Math.round(s.sanctions * 100)}% производства
         </p>
       )}
       {g.rebels.some((r) => r.country === me && r.sponsor === id && r.exposed) && (

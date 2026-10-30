@@ -6,6 +6,7 @@ import {
 } from '../../game/elections';
 import { GOVS } from '../../game/defs';
 import { fmt, fmtDate, fmtDays } from '../../game/format';
+import { sessionPreview } from '../../game/session';
 import { getGame } from '../../game/state';
 import { Bar, Card, KV, More } from '../common';
 import { report, setUI } from '../store';
@@ -92,13 +93,16 @@ function Campaign() {
   const hint: Record<string, string> = {
     rally: `💰 ${fmt(rallyCost(g))}, раз в 15 дней`,
     debate: `шанс блеснуть ${Math.round(debateChance(g) * 100)}%, раз за кампанию`,
-    rig: g.countries[g.player].gov === 'democracy' ? 'вскроется с шансом 45%' : 'вскроется с шансом 35%',
-    cancel: 'выборы перенесут на год',
+    rig: `вскроется с шансом ${g.countries[g.player].gov === 'democracy' ? 45 : 35}% — и ООН соберёт сессию`,
+    cancel: 'выборы перенесут на год, ООН соберёт сессию',
   };
   const act = (id: string, name: string, desc: string) => {
     const run = () => report(campaignAct(g, id));
-    if (id === 'rig' || id === 'cancel') setUI({ modal: { kind: 'confirm', danger: true, title: name, okText: id === 'rig' ? 'Подтасовать' : 'Отменить выборы', text: `${desc}.`, ok: run } });
-    else run();
+    const un = sessionPreview(g, 'democracy', g.player);
+    if (id === 'rig' || id === 'cancel') {
+      setUI({ modal: { kind: 'confirm', danger: true, title: name, okText: id === 'rig' ? 'Подтасовать' : 'Отменить выборы',
+        text: `${desc}. ${id === 'rig' ? `Если подтасовка вскроется: ${un}` : un}`, ok: run } });
+    } else run();
   };
   return (
     <div class="el-acts">

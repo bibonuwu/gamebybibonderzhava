@@ -1,16 +1,20 @@
-// Вкладка «ООН»: Генеральный секретарь, Генеральная Ассамблея (голосование и свои резолюции),
-// дела об агрессии, Совет Безопасности и архив решений.
+// Вкладка «ООН»: Генеральный секретарь, Генеральная Ассамблея (голосование, чрезвычайные сессии и свои резолюции),
+// санкции сессий, дела об агрессии, Совет Безопасности и архив решений.
 import { useState } from 'preact/hooks';
 import {
-  castVote, draft, forecastRes, isSG, lobby, lobbyCost, lobbyError, lobbyTargets, pending, proposeError, proposeRes, RES_BY_ID, resCost, RESOLUTIONS,
+  castVote, draft, forecastRes, isSG, lobby, lobbyCost, lobbyError, lobbyTargets, pending, proposeError, proposeRes, resCost, resDef, RESOLUTIONS,
   resWait, type ResDef,
 } from '../../game/assembly';
+import { STATS } from '../../game/economy';
 import { fmt, fmtDate, fmtDays } from '../../game/format';
 import { isMember } from '../../game/lodge';
 import { inOrder } from '../../game/order';
+import {
+  defend, defendError, defyStab, joinError, joinSanctions, playerComply, playerComplyError, SESSION_BY_ID, sessionOutlook, speechChance,
+} from '../../game/session';
 import { getGame } from '../../game/state';
-import type { GAVote, UNResolution } from '../../game/types';
-import { P5 } from '../../game/un';
+import type { GAVote, UNResolution, UNSanctions } from '../../game/types';
+import { countriesN, P5 } from '../../game/un';
 import { COUNTRY_DEFS } from '../../game/world';
 import { Card, Flag, RelBar, Seg } from '../common';
 import { report, setUI, useStore } from '../store';
@@ -77,6 +81,7 @@ export function UNPanel() {
       </div>
       {isSG(g) && <div class="un-sg-banner">🌐 Генеральный секретарь — мы: стабильность +3, резолюции вдвое дешевле и чаще, наш голос весомее</div>}
       <VotingCard />
+      <SanctionsCard />
       <ProposeCard />
       {g.un.length ? <UNCard /> : (
         <Card title="⚖️ Дела об агрессии">
@@ -93,7 +98,7 @@ const VOTE_LABEL: Record<GAVote, string> = { yes: '✅ За', no: '❌ Прот�
 
 /** Название резолюции без значка, с флагами сторон. */
 function ResName({ r }: { r: UNResolution }) {
-  const def = RES_BY_ID[r.kind];
+  const def = resDef(r.kind);
   return (
     <span class="row wrap" style={{ gap: '5px' }}>
       <b>{def?.name ?? 'Резолюция'}</b>
@@ -108,7 +113,7 @@ function VotingCard() {
   const list = pending(g);
   return (
     <Card title="🗳️ Генассамблея голосует" sub={`${list.length}`}
-      hint="Голосуют все страны: по отношению к автору и к цели. Решает большинство, нужно хотя бы 3 «за». Не проголосовали — значит, воздержались. Автор помнит, кто его поддержал.">
+      hint="Голосуют все страны: по отношению к автору и к цели. Решает большинство, нужно хотя бы 3 «за». Не проголосовали — значит, воздержались. Автор помнит, кто его поддержал. ⚡ Чрезвычайные сессии ООН созываются сами — после ядерных испытаний и ударов, отмены выборов, переворотов и тайных войн: принятая резолюция — санкции всех, кто голосовал «за», пока страна не выполнит требование.">
       {!list.length && <div class="small muted">Сейчас ничего не голосуется. Внесите свою резолюцию — ниже.</div>}
       {list.map((r) => <ResVote key={r.id} r={r} />)}
     </Card>
@@ -118,20 +123,24 @@ function VotingCard() {
 function ResVote({ r }: { r: UNResolution }) {
   const g = getGame()!;
   const me = g.player;
-  const def = RES_BY_ID[r.kind];
+  const def = resDef(r.kind)!;
   const f = forecastRes(g, r);
   const mine = r.by === me;
-  const vsUs = r.kind === 'condemn' && r.target === me;
+  const vsUs = (r.kind === 'condemn' || r.session) && r.target === me;
+  const sd = r.session ? SESSION_BY_ID[r.kind] : undefined;
+  const out = sd ? sessionOutlook(g, r) : undefined;
   return (
-    <div class={`un-res ${vsUs ? 'vs-us' : ''}`}>
+    <div class={`un-res ${vsUs ? 'vs-us' : ''} ${r.session ? 'session' : ''}`}>
       <div class="row" style={{ gap: '8px', alignItems: 'flex-start' }}>
         <span class="big-ic">{def.icon}</span>
         <div class="grow">
+          {r.session && <div class="un-session-tag">⚡ Чрезвычайная сессия</div>}
           <ResName r={r} />
           <div class="small muted">
-            вносит {mine ? 'наша страна' : COUNTRY_DEFS[r.by].name} · голосование через {Math.max(0, r.vote - g.day)} дн.
+            {r.session ? 'созвала' : 'вносит'} {mine ? 'наша страна' : COUNTRY_DEFS[r.by].name} · голосование через {Math.max(0, r.vote - g.day)} дн.
           </div>
-          <div class="small muted">{def.desc}</div>
+          {r.note && <div class="small">Повод: {r.note}</div>}
+          {sd ? <div class="small muted">ООН требует: <b>{sd.demand}</b></div> : <div class="small muted">{def.desc}</div>}
         </div>
       </div>
       <div class="un-forecast small">
@@ -139,8 +148,10 @@ function ResVote({ r }: { r: UNResolution }) {
         <span class="down">❌ {f.no}</span>
         <span class="muted">🤐 {f.abstain}</span>
         <span class={f.pass ? 'up' : 'down'}>прогноз: {f.pass ? 'примут' : 'отклонят'}</span>
+        {out?.pass && <span class="down">санкции −{Math.round(out.loss * 100)}% производства</span>}
       </div>
-      {mine ? <div class="small up">Это наша резолюция — мы, конечно, «за»</div> : (
+      {r.bloc && <div class="small lodge-note">👁️ Братья ложи голосуют ровно как мы</div>}
+      {sd && r.target === me ? <Defense r={r} /> : mine ? <div class="small up">{r.session ? 'Сессию созвали мы — мы, конечно, «за»' : 'Это наша резолюция — мы, конечно, «за»'}</div> : (
         <>
           <Seg<GAVote> value={r.myVote ?? 'abstain'} onChange={(v) => report(castVote(g, r.id, v))}
             options={(['yes', 'no', 'abstain'] as GAVote[]).map((v) => ({ v, label: VOTE_LABEL[v] }))} />
@@ -148,6 +159,84 @@ function ResVote({ r }: { r: UNResolution }) {
         </>
       )}
       <LobbyButton r={r} />
+    </div>
+  );
+}
+
+/** Сессия о нас: речь посла, выполнить требование заранее или демонстративно покинуть зал. */
+function Defense({ r }: { r: UNResolution }) {
+  const g = getGame()!;
+  const sd = SESSION_BY_ID[r.kind];
+  const comply = sd.complyHint(g, g.player, { victim: r.target2, gov: r.gov });
+  const stab = defyStab(g);
+  const btn = (how: 0 | 1 | 2, label: string, cls: string) => {
+    const err = defendError(g, r, how);
+    return <button class={`btn sm ${cls}`} disabled={!!err} title={err ?? undefined} onClick={() => report(defend(g, r.id, how))}>{label}</button>;
+  };
+  return (
+    <div class="un-defense">
+      <div class="small muted">Сессия — о нас, мы голосуем «против». Как ответим миру?</div>
+      <div class="row wrap" style={{ gap: '6px', margin: '6px 0' }}>
+        {btn(0, `🎤 Речь · шанс ${Math.round(speechChance(g) * 100)}%`, '')}
+        {btn(1, '🙇 Выполнить требование', 'ghost')}
+        {btn(2, '🚪 Покинуть зал', 'danger')}
+      </div>
+      <div class="small muted">🙇 {comply} — сессия закроется без санкций. 🚪 Колеблющиеся обидятся, санкции — в полтора раза дольше, стабильность {stab > 0 ? '+' : ''}{stab}.</div>
+      {r.speech !== undefined && <div class={`small ${r.speech > 0 ? 'up' : 'down'}`}>🎤 {r.speech > 0 ? 'Речь удалась: колеблющиеся склоняются к нам' : 'Речь провалилась: зал освистал нашего посла'}</div>}
+      {r.defiant && <div class="small down">🚪 Мы покинули зал Генассамблеи</div>}
+    </div>
+  );
+}
+
+/** Санкции чрезвычайных сессий: против нас — выполнить требование, против других — присоединиться. */
+function SanctionsCard() {
+  const g = getGame()!;
+  const me = g.player;
+  const list = [...g.assembly.sanctions].sort((a, b) => Number(b.target === me) - Number(a.target === me));
+  if (!list.length) return null;
+  return (
+    <Card title="🚫 Санкции ООН" sub={`${list.length}`}
+      hint="Санкции чрезвычайных сессий: страны, голосовавшие «за», не торгуют с нарушителем и не подписывают с ним договоров, пока он не выполнит требование ООН или не выйдет срок. Присоединиться может любой — но торговля с нарушителем прекратится.">
+      {list.map((s) => <SanctionRow key={s.id} s={s} />)}
+    </Card>
+  );
+}
+
+function SanctionRow({ s }: { s: UNSanctions }) {
+  const g = getGame()!;
+  const me = g.player;
+  const sd = SESSION_BY_ID[s.kind];
+  const ours = s.target === me;
+  const cerr = ours ? playerComplyError(g, s.id) : null;
+  const jerr = ours ? null : joinError(g, s);
+  return (
+    <div class={`un-res ${ours ? 'vs-us' : ''}`}>
+      <div class="row" style={{ gap: '8px', alignItems: 'flex-start' }}>
+        <span class="big-ic">{sd?.icon ?? '🚫'}</span>
+        <div class="grow">
+          <div class="row wrap" style={{ gap: '5px' }}>
+            <Flag id={s.target} />
+            <b>{ours ? 'Против нас' : COUNTRY_DEFS[s.target].name}</b>
+            <span class="small muted">· {sd?.name}</span>
+          </div>
+          <div class="small muted">
+            ввели {countriesN(s.by.length)}{s.by.includes(me) ? ', и мы' : ''} · −{Math.round(STATS[s.target].sanctions * 100)}% производства
+            {s.embargo ? ' · эмбарго на оружие' : ''} · ещё {fmtDays(s.until - g.day)}
+          </div>
+          <div class="small">Требование: <b>{sd?.demand}</b></div>
+        </div>
+      </div>
+      {ours && sd && (
+        <button class="btn sm block" style={{ marginTop: '6px' }} disabled={!!cerr} title={cerr ?? undefined} onClick={() => report(playerComply(g, s.id))}>
+          🙇 Выполнить: {sd.complyHint(g, me, s)}
+        </button>
+      )}
+      {!ours && !s.by.includes(me) && (
+        <button class="btn sm ghost block" style={{ marginTop: '6px' }} disabled={!!jerr} title={jerr ?? undefined}
+          onClick={() => report(joinSanctions(g, s.id), `🚫 Мы присоединились к санкциям против страны ${COUNTRY_DEFS[s.target].name}`)}>
+          🚫 Присоединиться к санкциям{jerr ? ` — ${jerr.toLowerCase()}` : ''}
+        </button>
+      )}
     </div>
   );
 }
@@ -172,7 +261,7 @@ function LobbyButton({ r }: { r: UNResolution }) {
 function ProposeCard() {
   const g = getGame()!;
   const [open, setOpen] = useState<string | null>(null);
-  const busy = pending(g).some((r) => r.by === g.player);
+  const busy = pending(g).some((r) => r.by === g.player && !r.session);
   return (
     <Card title="📜 Внести резолюцию" sub={isSG(g) ? 'Генсеку −50%' : undefined}
       hint="Через 5 дней резолюцию голосуют все страны. Справа у каждой цели — прогноз «за : против». Братья нашей ложи голосуют вместе с нами, а официальная ложа (наблюдатель ООН) — ровно как мы.">
@@ -264,11 +353,12 @@ function ArchiveCard() {
     <Card title="📚 Архив резолюций" sub={`${done.length}`} fold="un-archive">
       {done.map((r) => (
         <div class="un-arch" key={r.id}>
-          <span class="big-ic">{r.passed ? '✅' : '❌'}</span>
+          <span class="big-ic">{r.complied ? '🙇' : r.passed ? '✅' : '❌'}</span>
           <div class="grow">
-            <div class="row wrap" style={{ gap: '5px' }}>{RES_BY_ID[r.kind]?.icon} <ResName r={r} /></div>
+            <div class="row wrap" style={{ gap: '5px' }}>{resDef(r.kind)?.icon} <ResName r={r} /></div>
             <div class="small muted">
-              {r.by === me ? 'наша' : COUNTRY_DEFS[r.by].name} · {fmtDate(r.vote)} · {r.yes?.length ? `${r.yes.length} за, ${r.no?.length ?? 0} против` : 'снята с голосования'}
+              {r.session && '⚡ '}{r.by === me ? 'наша' : COUNTRY_DEFS[r.by].name} · {fmtDate(r.vote)} · {r.complied ? 'требование выполнено до голосования'
+                : r.yes?.length || r.no?.length ? `${r.yes?.length ?? 0} за, ${r.no?.length ?? 0} против` : 'снята с голосования'}
               {r.myVote && r.by !== me && ` · мы: ${VOTE_LABEL[r.myVote].slice(2).toLowerCase()}`}
             </div>
           </div>

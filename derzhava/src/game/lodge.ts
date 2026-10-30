@@ -5,12 +5,18 @@
 // 🔺 влияние — взносами, поручениями ложи и пожертвованиями — и тратит его на тайные услуги: компромат, переворот,
 // биржевой сговор, кулуары ООН. Каждая услуга поднимает 🕵️ подозрение; докопаются газеты — скандал.
 // Братья дружат (ai.ts → driftRelations), охотнее подписывают договоры и не воюют друг с другом; поднял меч на брата — изгнан.
-import { addRel, atWar, availableTechs, cname, makePeace, maxTrade, pair, peekPair } from './actions';
-import { GOVS, LODGE_OPEN_STAB } from './defs';
+// В ООН братья заступаются за своих (session.ts, assembly.ts), а услуга «Голоса братьев» сводит их голоса в один блок.
+// Жертве агрессии братья шлют деньги и оружие; брат в беде сам просит игрока о помощи — письмом (mail.ts → lodge_plea).
+// Перевороты ложи не остаются тайной для мира: ООН собирает сессию о хунте, а провал заговора игрока — о вмешательстве.
+import { addRel, atWar, availableTechs, cname, enemiesOf, makePeace, maxTrade, pair, peekPair } from './actions';
+import { botResolution, pending, resTitle } from './assembly';
+import { GOVS, LODGE_OPEN_STAB, TECH_BY_ID } from './defs';
 import { computeAll, STATS } from './economy';
 import { fmt } from './format';
+import { mailNow } from './mail';
 import { shockMarket } from './market';
 import { dropBrother, inOrder } from './order';
+import { convene } from './session';
 import { allBuildings, banner, log, news, pick, rand, sfx } from './state';
 import type { BuildingType, GameState, GovType, LodgeState, LodgeTask, LogEntry, Personality, TempMod } from './types';
 import { isAggressor, P5, sanctions } from './un';
@@ -134,6 +140,105 @@ export function tickLodge(g: GameState) {
   }
   if (g.day >= L.nextElection) election(g);
   if (g.day >= L.nextPlot) intrigue(g);
+  if (g.day % 30 === 11) brotherlyAid(g);
+  if (L.status === 'member' && g.day >= (L.nextPlea ??= g.day + 120)) plea(g);
+}
+
+// ---------- братская помощь ----------
+/** Жертва агрессии, которая ещё воюет. */
+const underAttack = (g: GameState, k: number) => g.un.some((cs) => cs.victim === k && cs.until === undefined);
+
+/** Братья скидываются для v: каждый — деньгами по силам и оружием, которое не нужно ему самому. */
+export function sendAid(g: GameState, v: number, donors: number[], boost = 1) {
+  let money = 0, arms = 0;
+  for (const k of donors) {
+    const c = g.countries[k];
+    const m = Math.max(0, Math.min(c.money * 0.05, Math.max(30, c.lastGross) * 2) * boost);
+    const a = Math.max(0, Math.min(c.arms * 0.04, c.arms - (c.soldiers + STATS[k].deployed) * 0.9));
+    c.money -= m;
+    c.arms -= a;
+    money += m;
+    arms += a;
+    addRel(g, v, k, 2);
+  }
+  g.countries[v].money += money;
+  g.countries[v].arms += arms;
+  return { money, arms };
+}
+
+/** Брата, на которого напали, ложа не бросает: раз в месяц братья шлют ему деньги и оружие (игроку — щедрее с каждой степенью). */
+function brotherlyAid(g: GameState) {
+  const me = g.player;
+  for (const v of g.lodge.members) {
+    if (!g.countries[v].alive || !underAttack(g, v)) continue;
+    const donors = g.lodge.members.filter((k) => k !== v && k !== me && g.countries[k].alive && !atWar(g, k, v) && g.countries[k].money > 0);
+    if (!donors.length) continue;
+    const { money, arms } = sendAid(g, v, donors, v === me ? 1 + 0.25 * Math.max(0, rankOf(g)) : 1);
+    const what = `${fmt(money)} 💰${arms >= 1 ? ` и ${fmt(arms)} 🔫` : ''}`;
+    if (v === me) {
+      sfx('coins');
+      log(g, `👁️ Братья не оставили нас в беде: +${what} от ${donors.length} братьев`, 'good');
+    } else whisper(g, `братья помогают брату, на которого напали, — ${cname(g, v)}: ${what}`);
+  }
+}
+
+// ---------- просьбы братьев ----------
+export const PLEA_REWARD = 15;
+/** Чего просит брат: денег (казна пуста, голод, смута), оружия (война) или голоса в ООН (о нём голосуют). */
+export const PLEA = { money: 0, arms: 1, vote: 2 };
+
+/** Брат в беде просит игрока о помощи — письмом. */
+function plea(g: GameState) {
+  const L = g.lodge;
+  const me = g.player;
+  L.nextPlea = g.day + 150 + Math.floor(rand(g) * 120);
+  const c = g.countries[me];
+  const opts: number[][] = [];
+  for (const k of botBrothers(g)) {
+    if (atWar(g, me, k)) continue;
+    const b = g.countries[k];
+    const r = pending(g).find((x) => x.target === k && x.by !== me && (x.session || x.kind === 'condemn') && x.myVote !== 'no');
+    if (r) opts.push([k, PLEA.vote, 0, r.id]);
+    if (enemiesOf(g, k).length && c.arms > 10) opts.push([k, PLEA.arms, Math.round(c.arms * 0.1), -1]);
+    if ((b.money < 0 || b.stability < 40 || STATS[k].hunger > 0) && c.money > 0) opts.push([k, PLEA.money, Math.round(income(g) * 30), -1]);
+  }
+  if (opts.length) mailNow(g, 'lodge_plea', pick(g, opts));
+}
+
+/** Ответ игрока на письмо брата (mail.ts). Возвращает, чем всё кончилось. */
+export function answerPlea(g: GameState, vals: number[], help: boolean): string {
+  const [k, kind, amount, rid] = vals;
+  const L = g.lodge;
+  const me = g.player;
+  const c = g.countries[me];
+  if (L.status !== 'member' || !isMember(g, k) || !g.countries[k]?.alive) return 'Брата больше нет среди нас — письмо осталось без ответа.';
+  if (!help) {
+    L.inf[me] = Math.max(0, L.inf[me] - 5);
+    addRel(g, me, k, -8);
+    return 'Брат прочёл отказ молча. Ложа это запомнит (−🔺5, отношения −8).';
+  }
+  let text: string;
+  if (kind === PLEA.money) {
+    if (c.money < amount) return 'В казне не нашлось таких денег — брат подождёт другого раза.';
+    c.money -= amount;
+    g.countries[k].money += amount;
+    text = `Деньги ушли брату (${fmt(amount)} 💰).`;
+  } else if (kind === PLEA.arms) {
+    const a = Math.min(amount, c.arms);
+    if (a < 1) return 'Склады пусты — помочь оружием нечем.';
+    c.arms -= a;
+    g.countries[k].arms += a;
+    text = `Эшелоны с оружием ушли к брату (${fmt(a)} 🔫).`;
+  } else {
+    const r = g.assembly.res.find((x) => x.id === rid);
+    if (!r || r.passed !== undefined) return 'Голосование уже закончилось — брат благодарит за добрые намерения.';
+    r.myVote = 'no';
+    text = `Наш посол голосует «против» резолюции «${resTitle(g, r)}» и говорит с колеблющимися в кулуарах.`;
+  }
+  addRel(g, me, k, 15);
+  earn(g, PLEA_REWARD);
+  g.counters.lodgePleas = (g.counters.lodgePleas ?? 0) + 1;
+  return `${text} Брат не забудет: отношения +15, +🔺${PLEA_REWARD}.`;
 }
 
 function checkRank(g: GameState) {
@@ -266,6 +371,18 @@ function dropMember(g: GameState, k: number) {
   if (L.master === k) {
     L.master = -1;
     L.nextElection = Math.min(L.nextElection, g.day + 60);
+  }
+}
+
+/** В стране k вернулась законная власть (по требованию ООН, session.ts): с ложами она порывает. */
+export function quitLodges(g: GameState, k: number) {
+  if (isMember(g, k)) {
+    dropMember(g, k);
+    whisper(g, `в стране ${cname(g, k)} вернулась законная власть — ложа потеряла брата`);
+  }
+  if (inOrder(g, k)) {
+    dropBrother(g, k);
+    log(g, `🚪 В стране ${cname(g, k)} вернулась законная власть и вышла из ложи «${g.order!.name}»`, 'bad');
   }
 }
 
@@ -530,8 +647,32 @@ export const OPS: OpDef[] = [
       news(g, `📰 Скандал в стране ${cname(g, t)}: газеты опубликовали тайную переписку правительства`, 'bad');
       return { text: `Компромат на страну ${cname(g, t)} опубликован: стабильность там −12, репутация в мире упала` };
     } },
+  { id: 'bloc', icon: '🗳️', name: 'Голоса братьев', rank: 1, cost: 20, susp: 6, cd: 90,
+    desc: 'На голосовании в ООН все братья голосуют ровно как мы — кроме тех, о ком резолюция',
+    choices: (g) => blocChoices(g),
+    run: (g, t) => {
+      const r = g.assembly.res.find((x) => x.id === t)!;
+      r.bloc = true;
+      return { text: `Голоса братьев: по резолюции «${resTitle(g, r)}» братья ложи голосуют как мы` };
+    } },
+  { id: 'lore', icon: '📜', name: 'Тайное знание', rank: 1, cost: 25, susp: 3, cd: 180,
+    desc: 'Братья-учёные делятся открытием: технология, которая есть у брата, а у нас нет (если нечего передать — 🧠)',
+    can: (g) => (botBrothers(g).length ? null : 'В ложе нет других братьев'),
+    run: (g) => {
+      const me = g.player;
+      const pool = availableTechs(g, me).map((t) => t.id).filter((id) => botBrothers(g).some((k) => g.countries[k].techs.includes(id)));
+      if (pool.length) {
+        const id = pick(g, pool);
+        g.countries[me].techs.push(id);
+        g.counters.techs = (g.counters.techs ?? 0) + 1;
+        return { text: `Тайное знание: братья передали нам технологию «${TECH_BY_ID[id].name}»` };
+      }
+      const v = Math.max(5, STATS[me].brainsRate) * 90;
+      g.countries[me].brains += v;
+      return { text: `Тайное знание: библиотека ложи открыта нашим учёным — +${fmt(v)} 🧠` };
+    } },
   { id: 'un', icon: '🌐', name: 'Кулуары ООН', rank: 2, cost: 40, susp: 15, cd: 240,
-    desc: 'Год братья не вводят против нас санкций и выходят из коалиций, а братья в Совбезе накладывают вето',
+    desc: 'Год братья не вводят против нас санкций (и снимают введённые), выходят из коалиций и голосуют за нас на чрезвычайных сессиях, а братья в Совбезе накладывают вето',
     run: (g) => {
       const me = g.player;
       g.lodge.shield = g.day + 365;
@@ -543,6 +684,12 @@ export const OPS: OpDef[] = [
         cs.donors = cs.donors.filter((k) => !isMember(g, k));
         cs.coalition = cs.coalition.filter((k) => !isMember(g, k));
         lifted += before - cs.sanctions.length;
+      }
+      for (const s of g.assembly.sanctions) {
+        if (s.target !== me) continue;
+        const before = s.by.length;
+        s.by = s.by.filter((k) => !isMember(g, k));
+        lifted += before - s.by.length;
       }
       let peace = 0;
       for (const k of botBrothers(g)) {
@@ -562,18 +709,21 @@ export const OPS: OpDef[] = [
     choices: (g) => countryChoices(outsiders(g).filter((k) => !atWar(g, g.player, k)), (k) => `шанс ${Math.round(coupChance(g, k) * 100)}%`),
     run: (g, t) => {
       const me = g.player;
+      const old = g.countries[t].gov;
       if (rand(g) < coupChance(g, t)) {
         overthrow(g, t, g.countries[me].gov);
         joinBot(g, t, 10);
         addRel(g, me, t, 40);
         g.counters.coups = (g.counters.coups ?? 0) + 1;
         news(g, `🔥 Переворот в стране ${cname(g, t)}: к власти пришло новое правительство — ${GOVS[g.countries[t].gov].name}`, 'war');
-        return { text: `Переворот удался! Новое правительство страны ${cname(g, t)} — наши люди: отношения +40, страна вступила в ложу` };
+        convene(g, 'coup', t, { gov: old, note: `переворот в стране ${cname(g, t)}` });
+        return { text: `Переворот удался! Новое правительство страны ${cname(g, t)} — наши люди: отношения +40, страна вступила в ложу. ООН соберёт сессию о хунте — голоса братьев пригодятся` };
       }
       g.lodge.suspicion = Math.min(100, g.lodge.suspicion + 20);
       addRel(g, me, t, -35);
       mod(g, t, 'stab', 6, 200, 'Сплочение после путча');
       news(g, `🔥 В стране ${cname(g, t)} сорван государственный переворот`, 'war');
+      convene(g, 'meddle', me, { victim: t, note: `заговор против правительства страны ${cname(g, t)}` });
       return { text: `Переворот в стране ${cname(g, t)} провалился — заговорщиков схватили, следы ведут к нам (подозрение +20, отношения −35)`, bad: true };
     } },
   { id: 'decree', icon: '👁️', name: 'Воля Великого мастера', rank: 3, cost: 50, susp: 10, cd: 365,
@@ -595,6 +745,14 @@ export const OPS: OpDef[] = [
     } },
 ];
 export const OP_BY_ID = Object.fromEntries(OPS.map((o) => [o.id, o])) as Record<string, OpDef>;
+
+/** Голосования в ООН, где наша позиция известна: братья встанут за ней. */
+function blocChoices(g: GameState): OpChoice[] {
+  const me = g.player;
+  return pending(g)
+    .filter((r) => !r.bloc && (r.by === me || r.myVote === 'yes' || r.myVote === 'no'))
+    .map((r) => ({ v: r.id, flag: r.target, label: `${resTitle(g, r)} · мы ${r.by === me || r.myVote === 'yes' ? '«за»' : '«против»'}` }));
+}
 
 /** Великому мастеру услуги дешевле. */
 export const opCost = (g: GameState, op: OpDef) => Math.round(op.cost * (rankOf(g) === 3 ? 0.7 : 1));
@@ -817,9 +975,20 @@ function intrigue(g: GameState) {
   if (!bots.length) return;
   const actor = L.master >= 0 && L.master !== me && g.countries[L.master].alive ? L.master : pick(g, bots);
   const r = rand(g);
-  if (r < 0.3) recruit(g, actor);
-  else if (r < 0.7) botCompromat(g, actor);
-  else botCoup(g, actor);
+  if (r < 0.28) recruit(g, actor);
+  else if (r < 0.6) botCompromat(g, actor);
+  else if (r < 0.85) botCoup(g, actor);
+  else lodgeAtUN(g, actor);
+}
+
+/** Ложа в ООН: мастер вносит в Генассамблею осуждение злейшего врага ложи — братья голосуют заодно. */
+function lodgeAtUN(g: GameState, actor: number) {
+  const me = g.player;
+  const cands = outsiders(g).filter((k) => k !== actor && g.rel[actor][k] < -20);
+  if (!cands.length || pending(g).some((r) => r.by !== me && !r.session)) return botCompromat(g, actor);
+  const t = cands.reduce((a, k) => (g.rel[actor][k] < g.rel[actor][a] ? k : a));
+  botResolution(g, 'condemn', actor, t);
+  whisper(g, `осуждение страны ${cname(g, t)} в ООН внесено по воле ложи — голосуйте «за», брат`);
 }
 
 /** Ложа посвящает нового брата — того, с кем у мастера лучшие отношения. */
@@ -859,11 +1028,13 @@ function botCoup(g: GameState, actor: number) {
   const t = pick(g, cands);
   g.lodge.inf[actor] = Math.max(0, g.lodge.inf[actor] - 40);
   if (rand(g) < coupChance(g, t)) {
+    const old = g.countries[t].gov;
     overthrow(g, t, g.countries[actor].gov);
     joinBot(g, t, 10);
     addRel(g, actor, t, 30);
     whisper(g, `переворот в стране ${cname(g, t)} устроила ложа — новое правительство уже в наших рядах`,
       `🔥 Переворот в стране ${cname(g, t)}: к власти пришло новое правительство — ${GOVS[g.countries[t].gov].name}`, 'war');
+    convene(g, 'coup', t, { gov: old, note: `переворот в стране ${cname(g, t)}` });
   } else {
     whisper(g, `брат ${cname(g, actor)} пытался устроить переворот в стране ${cname(g, t)}, но заговор раскрыли`,
       `🔥 В стране ${cname(g, t)} сорван государственный переворот`, 'war');
@@ -875,10 +1046,15 @@ function plotAgainstPlayer(g: GameState) {
   const me = g.player;
   const r = rand(g);
   sfx('alarm');
-  if (r < 0.4) {
+  // брат-масон вносит в ООН осуждение нашего правительства — если Генассамблея не занята другой резолюцией
+  const accuser = botBrothers(g).filter((k) => !atWar(g, k, me) && g.rel[k][me] < 10);
+  if (r >= 0.8 && accuser.length && !pending(g).some((x) => x.by !== me && !x.session)) {
+    botResolution(g, 'condemn', pick(g, accuser), me);
+    log(g, '👁️ Происки ложи: брат-масон внёс в ООН резолюцию с осуждением нашего правительства — братья проголосуют «за»', 'bad', false);
+  } else if (r < 0.35 || r >= 0.8) {
     mod(g, me, 'stab', -8, 150, 'Происки ложи');
     log(g, '👁️ Происки ложи: подконтрольные ложе газеты травят правительство (стабильность −8)', 'bad');
-  } else if (r < 0.7) {
+  } else if (r < 0.6) {
     let broken = '';
     for (const k of botBrothers(g)) {
       addRel(g, me, k, -10);

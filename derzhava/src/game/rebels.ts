@@ -12,8 +12,9 @@ import { attackPerSoldier, computeAll, regionDefense, regionWeight, STATS } from
 import { fmt } from './format';
 import { brothers } from './lodge';
 import { isNuclear } from './nuclear';
+import { convene } from './session';
 import { counterOf, netOf, plant, plantError, watched } from './spy';
-import { banner, fx, log, mapDirty, news, rand, sfx } from './state';
+import { banner, fx, log, mapDirty, news, rand, sfx, trimBuildings } from './state';
 import type { GameState, Personality, Rebellion } from './types';
 import { REGIONS, hexDist, vb } from './world';
 
@@ -194,6 +195,7 @@ function expose(g: GameState, r: Rebellion) {
     sfx('alarm');
     log(g, `🕵️ Наш след раскрыт: ${cname(g, r.country)} ${vb(r.country, 'узнал')}, кто вооружает ${vb(r.country, 'его', 'её', 'их')} мятежников (отношения −25)`, 'bad');
   } else news(g, `🕵️ Скандал: ${cname(g, r.sponsor)} тайно вооружает мятежников в стране ${cname(g, r.country)}`, 'war');
+  convene(g, 'meddle', r.sponsor, { victim: r.country, note: `оружие мятежникам в стране ${cname(g, r.country)}` });
 }
 
 /** Регион отделяется и становится ничьей землёй. ally — кто помог: ему присоединение дешевле. */
@@ -207,6 +209,7 @@ export function secede(g: GameState, rid: number, ally = -1) {
   g.counters.seceded = (g.counters.seceded ?? 0) + 1; // по всему миру
   const fc = g.countries[from];
   fc.stability = Math.max(0, fc.stability - 4);
+  trimBuildings(g); // пристройки комплексов на отделившейся земле отпадают
   mapDirty.territory = true;
   mapDirty.buildings = true;
   fx({ kind: 'flash', tile: REGIONS[rid].center, color: 0x8a8f99 });

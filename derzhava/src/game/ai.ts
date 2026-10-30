@@ -5,10 +5,10 @@ import {
   builderCost, builderError, cancelTreaty, cname, declareWar, demandTribute, disband, enemiesOf, fundamentalCost, gift, giftCost,
   launchAttack, makePeace, neighborCountries, peaceScore, peekPair, PLAYER_GRACE, propose, reachableTargets, recruit, recruitCost,
   reinforce, research, researchFundamental, retreat, seaReach, sendGuard, sharedFoe, sign, soldiersFor, startBuild, startUpgrade,
-  techCost, upgradeBuilders, upgradeError, warError, willAccept, type DiploKind,
+  techCost, upgradeBuilders, upgradeError, upgradeGrowth, warError, willAccept, freeLand, type DiploKind,
 } from './actions';
 import {
-  BUILDINGS, BUILDING_TYPES, COST_GROWTH, DIFFICULTY, GOVS, LEVEL_EFFECT, PERSONALITIES, WAR_GRACE_DAYS,
+  BUILDINGS, BUILDING_TYPES, COST_GROWTH, DIFFICULTY, FOOTPRINT, GOVS, LEVEL_EFFECT, PERSONALITIES, WAR_GRACE_DAYS,
 } from './defs';
 import { difficultyMult, PORT_TILES, regionWeight, STATS } from './economy';
 import { fmt } from './format';
@@ -26,7 +26,7 @@ import {
   buyCompany, buyCompanyError, companyPrice, foundCompany, foundCost, foundError, geniusError, geniusPrice, grantCost, grantError,
   hireGenius, hireScientists, inviteInvestors, investorsCost, investorsError, richTax, richTaxError, sciGrant, sciPrice,
 } from './society';
-import { allBuildings, log, news, pick, rand, sfx } from './state';
+import { allBuildings, buildingSize, log, news, pick, rand, sfx } from './state';
 import type { BudgetKey, BuildingType, Company, GameState, Genius, GovType, Proposal, ReligionPolicy, Sector } from './types';
 import { botSpy } from './spy';
 import { fearsUN, sanctions, victimsOf } from './un';
@@ -247,7 +247,7 @@ function buildWeights(g: GameState, i: number, th: Threat): Partial<Record<Build
     if (w.port) w.port *= 1.5;
   }
   // окупаемость завода падает с каждым новым (цена растёт)
-  const payback = (150 * Math.pow(COST_GROWTH, s.counts.factory)) / Math.max(0.3, s.mods.factory);
+  const payback = (150 * Math.pow(COST_GROWTH, s.area.factory)) / Math.max(0.3, s.mods.factory);
   if (payback > 900 && w.factory) w.factory *= 0.4;
   return w;
 }
@@ -270,13 +270,17 @@ export function bestBuildOption(g: GameState, i: number, type: BuildingType, car
   let best: { tile: number; cost: number; upgrade: boolean } | null = null;
   let bestPer = Infinity;
   const tile = bestTileFor(g, i, type);
+  // земли мало — новый комплекс занимает место, нужное старым для роста: ценим его дороже и чаще улучшаем
+  const free = freeLand(g, i);
+  const crowd = free < 0.5 ? 1 + (3 * (0.5 - free)) / 0.5 : 1;
   if (tile >= 0) {
     const w = regionWeight(g.regions[REGION_OF[tile]].pop);
     const cost = buildCost(g, i, type, 1, REGION_OF[tile]);
-    bestPer = (cost + upkeepK * w) / w;
+    // комплекс из FOOTPRINT[1] клеток работает как столько же зданий
+    bestPer = ((cost + upkeepK * w * FOOTPRINT[1]) / (w * FOOTPRINT[1])) * crowd;
     best = { tile, cost, upgrade: false };
   }
-  if (!careful && best) return best;
+  if (!careful && best && crowd === 1) return best;
   const { tiles, list } = allBuildings(g);
   for (let k = 0; k < tiles.length; k++) {
     const t = tiles[k];
@@ -285,7 +289,10 @@ export function bestBuildOption(g: GameState, i: number, type: BuildingType, car
     const rid = REGION_OF[t];
     const w = regionWeight(g.regions[rid].pop);
     const cost = buildCost(g, i, type, b.level + 1, rid);
-    const per = (cost + upkeepK * w) / ((LEVEL_EFFECT[b.level + 1] - LEVEL_EFFECT[b.level]) * w);
+    // улучшение поднимает уровень всех клеток и пристраивает новые
+    const size = buildingSize(b), after = size + upgradeGrowth(g, t);
+    const gain = LEVEL_EFFECT[b.level + 1] * after - LEVEL_EFFECT[b.level] * size;
+    const per = (cost + upkeepK * w * ((b.level + 1) * after - b.level * size)) / (gain * w);
     if (per < bestPer) {
       bestPer = per;
       best = { tile: t, cost, upgrade: true };

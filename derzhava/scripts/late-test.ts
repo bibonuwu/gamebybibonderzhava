@@ -4,8 +4,10 @@
 import { aiTurn } from '../src/game/ai';
 import { lobby, lobbyTargets, pending } from '../src/game/assembly';
 import { EXPECT_MAX } from '../src/game/defs';
+import { ratingParts } from '../src/game/debt';
 import { computeAll, STATS } from '../src/game/economy';
 import { resolveEvent } from '../src/game/events';
+import { COMMODITIES, COMMODITY, exchangeBuy, exchangeSell, goldValue, holding, priceRatio, qtyForMoney } from '../src/game/exchange';
 import { aidError, MEGAS, megaNext, startAid, startMega } from '../src/game/megaprojects';
 import { newGame, SAVE_VERSION } from '../src/game/newGame';
 import { pensionReform, PROGRAMS, setGreen, setSafety, startProgram } from '../src/game/prosperity';
@@ -115,9 +117,32 @@ check(actions === 2, 'решения игрока сработали');
 const stabs = g.countries.filter((c) => c.alive).map((c) => c.stability).sort((a, b) => a - b);
 console.log(`  стабильность: медиана ${stabs[Math.floor(stabs.length / 2)].toFixed(0)}, ожидания игрока ${(me.expect ?? 0).toFixed(1)}, нефть ×${(g.res!.oil.price / g.res!.oil.base / g.res!.level).toFixed(2)}, литий ×${(g.res!.lith.price / g.res!.lith.base / g.res!.level).toFixed(2)}`);
 
+console.log('— биржа');
+me.money = Math.max(me.money, 0) + 1e7;
+for (const k of COMMODITIES) {
+  const have = holding(me, k), m0 = me.money;
+  const q = qtyForMoney(g, k, me.money * 0.05);
+  check(q > 0 && exchangeBuy(g, player, k, q) === null && holding(me, k) > have && me.money < m0, `${COMMODITY[k].name}: куплено ${q.toFixed(1)}`);
+  const m1 = me.money;
+  check(exchangeSell(g, player, k, q) === null && me.money > m1 && me.money < m0, `${COMMODITY[k].name}: продано — туда-обратно чуть дешевле`);
+}
+check(exchangeSell(g, player, 'gold', holding(me, 'gold') + 1) !== null, 'больше, чем есть, не продать');
+check(exchangeBuy(g, player, 'gold', qtyForMoney(g, 'gold', me.money * 0.3)) === null && goldValue(g, player) > 0, 'золотой запас');
+check(ratingParts(g, player).some((p) => p[0] === 'Золотой запас' && p[1] > 0), 'золото поднимает кредитный рейтинг');
+// мировой дефицит нефти: резерв закрывает недостачу
+me.oilStock = 1e6;
+g.res!.oil.cut = 0.6;
+for (let d = 0; d < 5; d++) tick(g);
+const S = STATS[player];
+if (g.res!.oil.avail < 0.999 && S.oilNeed > S.oilProd) check(S.oilDraw > 0 && (me.oilStock ?? 0) < 1e6, `резерв нефти тратится в дефицит: −${S.oilDraw.toFixed(2)} в день`);
+else console.log('  · нефти хватает и без резерва — проверка резерва пропущена');
+g.res!.oil.cut = 0;
+check(sane(g) === null && Number.isFinite(g.exchange!.gold.price) && g.exchange!.gold.price > 0, `числа биржи в порядке: золото ×${priceRatio(g, 'gold').toFixed(2)}`);
+
 console.log('— сохранение');
 const back = parseSave(exportText(g));
 check('g' in back && back.g.day === g.day && !!back.g.res, 'партия сохраняется и открывается');
+check('g' in back && (back.g.countries[player].gold ?? 0) === (me.gold ?? 0) && !!back.g.exchange, 'биржевой счёт сохраняется');
 
 // старое сохранение (версия 1): без эпохи ресурсов и климата
 const old = JSON.parse(JSON.stringify(newGame(player, 'normal', seed + 1))) as GameState;

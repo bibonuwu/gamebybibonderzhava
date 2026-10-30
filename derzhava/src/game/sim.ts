@@ -7,6 +7,7 @@ import { BUILDINGS, GOVS } from './defs';
 import { computeAll, pairKey, REGION_DELTA, STATS, tradeWith } from './economy';
 import { triggerEvent } from './events';
 import { tickDebt } from './debt';
+import { tickExchange } from './exchange';
 import { tickElections } from './elections';
 import { tickLodge } from './lodge';
 import { tickNuclear } from './nuclear';
@@ -56,6 +57,7 @@ export function tick(g: GameState) {
   tickSociety(g);
   // сырьё, климат, ожидания народа и старение
   tickResources(g);
+  tickExchange(g);
   tickProsperity(g);
 
   g.regions.forEach((r, id) => {
@@ -71,6 +73,7 @@ export function tick(g: GameState) {
     b.progress -= owner >= 0 ? STATS[owner].buildSpeed : 1; // опытные строители работают быстрее
     if (b.progress <= 0) {
       b.progress = 0;
+      delete b.add; // пристройки достроены
       mapDirty.buildings = true;
       if (owner === g.player) {
         sfx('done');

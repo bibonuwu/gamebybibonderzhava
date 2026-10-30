@@ -28,3 +28,8 @@ export function fmtDate(day: number): string {
   return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
 }
 export const fmtDays = (d: number) => (d >= 365 ? `${(d / 365).toFixed(1)} г.` : `${Math.ceil(d)} дн.`);
+/** «1 клетка», «3 клетки», «5 клеток». */
+export function fmtTiles(n: number): string {
+  const d = n % 10, h = n % 100;
+  return `${n} ${d === 1 && h !== 11 ? 'клетка' : d >= 2 && d <= 4 && (h < 12 || h > 14) ? 'клетки' : 'клеток'}`;
+}

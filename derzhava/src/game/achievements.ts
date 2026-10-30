@@ -75,6 +75,8 @@ export const ACHIEVEMENTS: AchievementDef[] = [
   { id: 'orderun', icon: '📜', name: 'Из тени — в ООН', desc: 'Зарегистрируйте свою ложу официально', check: (g) => (g.counters.orderOfficial ?? 0) >= 1 },
   { id: 'sg', icon: '🌐', name: 'Генеральный секретарь', desc: 'Станьте Генсеком ООН', check: (g) => (g.counters.sgTerms ?? 0) >= 1 },
   { id: 'unres3', icon: '🕊️', name: 'Голос мира', desc: 'Проведите через Генассамблею три своих резолюции', check: (g) => (g.counters.unResPassed ?? 0) >= 3 },
+  { id: 'session', icon: '🎤', name: 'Перед лицом мира', desc: 'Отбейтесь на чрезвычайной сессии ООН: резолюцию против нас отклонили', check: (g) => (g.counters.sessionsWon ?? 0) >= 1 },
+  { id: 'brother3', icon: '🤝', name: 'Брат за брата', desc: 'Откликнитесь на три просьбы братьев по ложе', check: (g) => (g.counters.lodgePleas ?? 0) >= 3 },
   { id: 'coup', icon: '🔥', name: 'Серый кардинал', desc: 'Устройте успешный переворот в чужой стране', check: (g) => (g.counters.coups ?? 0) >= 1 },
   { id: 'lodgeban', icon: '🚫', name: 'Охотник на масонов', desc: 'Запретите тайную ложу в своей стране', check: (g) => (g.counters.lodgeBanned ?? 0) >= 1 },
   { id: 'elect1', icon: '🗳️', name: 'Народный избранник', desc: 'Победите на выборах', check: (g) => (g.counters.electionsWon ?? 0) >= 1 },

@@ -24,7 +24,7 @@ const ANNEX_DAYS = 730; // мир заключён, но захват не пр�
 /** Шанс, что бот нападёт, хотя резолюция пройдёт и против него встанет коалиция. */
 const UN_RECKLESS: Record<Personality, number> = { aggressor: 0.12, fanatic: 0.08, cautious: 0.02, trader: 0, scientist: 0 };
 /** Насколько бот боится санкций всего мира (1 — передумает, если санкции введут все). */
-const SANCTION_FEAR: Record<Personality, number> = { aggressor: 1, fanatic: 1.2, cautious: 2.5, trader: 3, scientist: 2.5 };
+export const SANCTION_FEAR: Record<Personality, number> = { aggressor: 1, fanatic: 1.2, cautious: 2.5, trader: 3, scientist: 2.5 };
 /** Готовность воевать в коалиции ООН. */
 const FIGHT_ZEAL: Record<Personality, number> = { aggressor: 0.25, fanatic: 0.15, cautious: 0.05, trader: -0.05, scientist: -0.05 };
 
@@ -39,11 +39,13 @@ export const isAggressor = (g: GameState, x: number) => g.un.some((cs) => cs.agg
 const activeCase = (g: GameState, a: number, v: number) => g.un.find((cs) => cs.aggressor === a && cs.victim === v && cs.until === undefined);
 /** Жертвы агрессора x, с которыми он ещё воюет. */
 export const victimsOf = (g: GameState, x: number) => g.un.filter((cs) => cs.aggressor === x && cs.until === undefined).map((cs) => cs.victim);
-/** Ввела ли страна k санкции против x. */
-export const sanctions = (g: GameState, k: number, x: number) => g.un.some((cs) => cs.aggressor === x && cs.sanctions.includes(k));
-/** Эмбарго на оружие: резолюция Совбеза принята, а агрессор всё ещё воюет. */
+/** Ввела ли страна k санкции против x — за агрессию или по итогам чрезвычайной сессии (session.ts). */
+export const sanctions = (g: GameState, k: number, x: number) => g.un.some((cs) => cs.aggressor === x && cs.sanctions.includes(k))
+  || (g.assembly?.sanctions ?? []).some((s) => s.target === x && s.by.includes(k));
+/** Эмбарго на оружие: резолюция Совбеза принята, а агрессор всё ещё воюет (или сессия ООН ответила на ядерный удар). */
 export const embargoed = (g: GameState, x: number) =>
-  g.un.some((cs) => cs.aggressor === x && cs.until === undefined && cs.resolved && cs.veto === undefined);
+  g.un.some((cs) => cs.aggressor === x && cs.until === undefined && cs.resolved && cs.veto === undefined)
+  || (g.assembly?.sanctions ?? []).some((s) => s.target === x && s.embargo);
 
 /** Права ли страна a, объявляя войну b. Справедливо — помочь жертве агрессии или ударить первым по тому,
  *  кто сам готовил нападение; всё остальное — агрессия. */

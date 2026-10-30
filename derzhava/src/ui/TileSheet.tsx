@@ -1,13 +1,13 @@
 import { useEffect } from 'preact/hooks';
 import {
   ALLY_DISCOUNT, annex, annexCost, annexError, atWar, attackError, buildCost, buildTime, demolish, placeError, reach, startBuild,
-  startUpgrade, upgradeError,
+  startUpgrade, upgradeError, upgradeGrowth,
 } from '../game/actions';
 import { rebelAt } from '../game/rebels';
-import { BUILDINGS, BUILDING_TYPES, LEVEL_EFFECT } from '../game/defs';
+import { BUILDINGS, BUILDING_TYPES, FOOTPRINT, LEVEL_EFFECT } from '../game/defs';
 import { REGION_FARM, regionDefense, regionWeight, STATS } from '../game/economy';
-import { fmt } from '../game/format';
-import { getGame } from '../game/state';
+import { fmt, fmtTiles } from '../game/format';
+import { buildingAt, buildingSize, getGame } from '../game/state';
 import { COUNTRY_DEFS, REGIONS, REGION_OF, isWater, terrainOf } from '../game/world';
 import { inFallout } from '../game/nuclear';
 import { oilDepletion, REGION_LITH, REGION_OIL } from '../game/resources';
@@ -48,7 +48,11 @@ export function TileSheet({ map }: { map: MapView }) {
   const owner = rs.owner;
   const c = g.countries[me];
   const mine = owner === me;
-  const b = mine ? g.buildings[tile] : undefined; // чужие здания не показываем
+  // клетка может быть пристройкой комплекса — показываем весь комплекс (чужие здания не показываем)
+  const at = mine ? buildingAt(g, tile) : -1;
+  const b = at >= 0 ? g.buildings[at] : undefined;
+  const grow = b ? upgradeGrowth(g, at) : 0;
+  const upErr = b && b.progress === 0 && b.level < 3 ? upgradeError(g, me, at) : null;
   const isCenter = reg.center === tile;
   const cap = rs.cap0 * (1 + 0.15 * REGION_FARM[rid]) * (owner >= 0 ? STATS[owner].mods.cap : 1);
   const buildable = mine && !b && !isCenter ? BUILDING_TYPES.filter((t) => !placeError(g, me, tile, t)) : [];
@@ -98,26 +102,32 @@ export function TileSheet({ map }: { map: MapView }) {
           <div class="grow">
             <b>{BUILDINGS[b.type].name}</b> · ур. {b.progress > 0 && b.level > 1 ? `${b.level - 1} → ${b.level}` : b.level}
             <div class="small muted">{BUILDINGS[b.type].desc}</div>
+            <div class="small">
+              🧱 Комплекс: {fmtTiles(buildingSize(b))}{at !== tile && ' · это его пристройка'}
+              {b.progress === 0 && b.level < 3 && grow > 0 && <span class="muted"> · улучшение пристроит ещё {fmtTiles(grow)}</span>}
+            </div>
             {b.progress > 0 && <><div class="small">Строится: {Math.ceil(b.progress / STATS[me].buildSpeed)} сек</div><Bar value={1 - b.progress / b.total} /></>}
           </div>
-          {mine && b.progress === 0 && b.level < 3 && (
-            <button class="btn sm" disabled={!!upgradeError(g, me, tile) || c.money < buildCost(g, me, b.type, b.level + 1, rid)} onClick={() => report(startUpgrade(g, me, tile), '⬆️ Улучшение началось')}>
-              ⬆️ {fmt(buildCost(g, me, b.type, b.level + 1, rid))}
+          {b.progress === 0 && b.level < 3 && (
+            <button class="btn sm" disabled={!!upErr || c.money < buildCost(g, me, b.type, b.level + 1, REGION_OF[at])} onClick={() => report(startUpgrade(g, me, at), '⬆️ Улучшение началось')}>
+              ⬆️ {fmt(buildCost(g, me, b.type, b.level + 1, REGION_OF[at]))}
             </button>
           )}
         </div>
       )}
-      {b && mine && b.progress === 0 && b.level < 3 && upgradeError(g, me, tile) && <div class="small muted">{upgradeError(g, me, tile)}</div>}
-      {b && mine && (
-        <button class="btn ghost sm" style={{ marginTop: '4px' }} onClick={() => setUI({ modal: { kind: 'confirm', title: 'Снести здание?', text: 'Деньги не вернутся.', danger: true, okText: 'Снести', ok: () => demolish(g, me, tile) } })}>🧨 Снести</button>
+      {upErr && <div class="small muted">{upErr}</div>}
+      {b && (
+        <button class="btn ghost sm" style={{ marginTop: '4px' }} onClick={() => setUI({ modal: { kind: 'confirm', title: 'Снести здание?', text: `Снесётся весь комплекс (${fmtTiles(buildingSize(b))}). Деньги не вернутся.`, danger: true, okText: 'Снести', ok: () => demolish(g, me, at) } })}>🧨 Снести</button>
       )}
 
       {buildable.length > 0 && (
         <div style={{ marginTop: '10px' }}>
-          <div class="small muted" style={{ marginBottom: '6px' }}>Построить здесь · мест для стройки {STATS[me].slots - STATS[me].constructing} из {STATS[me].slots}</div>
+          <div class="small muted" style={{ marginBottom: '6px' }}>
+            Построить здесь · займёт {fmtTiles(FOOTPRINT[1])}, улучшения — до {FOOTPRINT[3]} · мест для стройки {STATS[me].slots - STATS[me].constructing} из {STATS[me].slots}
+          </div>
           {buildable.map((t) => {
             const cost = buildCost(g, me, t, 1, rid);
-            const out = t === 'factory' ? 4 * LEVEL_EFFECT[1] * regionWeight(rs.pop) * c.baseProd * STATS[me].mods.factory : 0;
+            const out = t === 'factory' ? 4 * LEVEL_EFFECT[1] * FOOTPRINT[1] * regionWeight(rs.pop) * c.baseProd * STATS[me].mods.factory : 0;
             return (
               <div class="build-opt" key={t}>
                 <span class="big-ic">{BUILDINGS[t].icon}</span>
@@ -133,8 +143,12 @@ export function TileSheet({ map }: { map: MapView }) {
           })}
         </div>
       )}
-      {mine && !b && !isCenter && buildable.length === 0 && <div class="small muted" style={{ marginTop: '8px' }}>На этой клетке строить нечего — попробуйте соседнюю (заводы и университеты — ближе к центру региона).</div>}
-      {mine && isCenter && <div class="small muted" style={{ marginTop: '8px' }}>Центр региона. Университеты и больницы ставятся на соседние клетки, заводы — до 2 клеток от центра.</div>}
+      {mine && !b && !isCenter && buildable.length === 0 && (
+        <div class="small muted" style={{ marginTop: '8px' }}>
+          На этой клетке строить нечего — попробуйте соседнюю. Здание занимает {fmtTiles(FOOTPRINT[1])}: рядом нужна ещё свободная клетка (заводы и университеты — ближе к центру региона).
+        </div>
+      )}
+      {mine && isCenter && <div class="small muted" style={{ marginTop: '8px' }}>Центр региона. Университеты и больницы ставятся на соседние клетки, заводы — до 2 клеток от центра. Каждое здание занимает {fmtTiles(FOOTPRINT[1])} и растёт при улучшении.</div>}
 
       {owner === -1 && (
         <div class="grid2" style={{ marginTop: '10px' }}>

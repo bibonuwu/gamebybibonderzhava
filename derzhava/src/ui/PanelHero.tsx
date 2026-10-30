@@ -161,7 +161,7 @@ function stats(g: GameState, kind: HeroKind): { sub: string; list: Stat[] } {
     case 'market': {
       const days = foodDays(g, me);
       return {
-        sub: s.hunger > 0 ? '⚠️ В стране голод — купите еду' : s.resShort > 0.005 ? `⚠️ Не хватает сырья: производство −${Math.round(s.resShort * 100)}%` : 'Еда, оружие, сырьё, учёные и компании',
+        sub: s.hunger > 0 ? '⚠️ В стране голод — купите еду' : s.resShort > 0.005 ? `⚠️ Не хватает сырья: производство −${Math.round(s.resShort * 100)}%` : 'Еда, оружие, сырьё, биржа, учёные и компании',
         list: [
           { ic: '🌾', v: days > 999 ? '999+' : `${Math.floor(days)} дн.`, l: 'запас еды', tone: s.hunger > 0 ? 'bad' : days < 30 ? 'warn' : 'good', go: () => setUI({ marketTab: 'food' }) },
           { ic: '🔫', v: `${Math.round(s.equip * 100)}%`, l: 'оснащение', tone: s.equip < 0.95 ? 'warn' : undefined, go: () => setUI({ marketTab: 'arms' }) },

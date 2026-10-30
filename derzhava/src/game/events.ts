@@ -8,8 +8,9 @@ import { resolveElectionEvent } from './elections';
 import { resolveLodgeEvent } from './lodge';
 import { resolveDemand } from './people';
 import { resolveDisaster } from './prosperity';
+import { isSessionEvent, resolveSessionEvent } from './session';
 import { adoptGenius, companiesOf, geniusText } from './society';
-import { allBuildings, log, pick, rand, removeBuilding, sfx } from './state';
+import { allBuildings, log, pick, rand, ruinTile, sfx } from './state';
 import type { Country, GameState, TempMod } from './types';
 import { voteUN } from './un';
 import { COUNTRY_DEFS, REGION_OF, REGIONS } from './world';
@@ -145,7 +146,7 @@ const EVENTS: EventDef[] = [
         const t = pick(g, mine);
         const b = g.buildings[t];
         if (b.level > 1 && b.progress === 0) b.level--;
-        else removeBuilding(g, t);
+        else ruinTile(g, t); // комплекс теряет одну клетку
       }
       mod(g, me(g), 'stab', -6, 120, 'Землетрясение');
     } },
@@ -324,7 +325,10 @@ export function triggerEvent(g: GameState) {
 export function resolveEvent(g: GameState, option: number) {
   if (!g.event) return;
   if (g.event.kind === 'demand') return resolveDemand(g, option);
-  if (g.event.kind === 'un') return g.event.id === SG_EVENT ? resolveSGEvent(g, option) : voteUN(g, option);
+  if (g.event.kind === 'un') {
+    if (g.event.id === SG_EVENT) return resolveSGEvent(g, option);
+    return isSessionEvent(g.event.id) ? resolveSessionEvent(g, option) : voteUN(g, option);
+  }
   if (g.event.kind === 'lodge') return resolveLodgeEvent(g, option);
   if (g.event.kind === 'election') return resolveElectionEvent(g, option);
   if (g.event.kind === 'debt') return resolveDebtEvent(g, option);

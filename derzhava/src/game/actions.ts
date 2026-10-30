@@ -1,9 +1,13 @@
 // Действия стран: стройка, наука, армия, расширение, дипломатия, война.
 import {
-  BATTLE_DAYS, BUILDER_COST, BUILDER_NAMES, BUILDERS_MAX, BUILDINGS, COST_GROWTH, LEVEL_COST, TECHS, TECH_BY_ID, TIER_COST, WAR_GRACE_DAYS,
+  BATTLE_DAYS, BUILDER_COST, BUILDER_NAMES, BUILDERS_MAX, BUILDINGS, COST_GROWTH, FOOTPRINT, LEVEL_COST, TECHS, TECH_BY_ID, TIER_COST,
+  WAR_GRACE_DAYS,
 } from './defs';
 import { attackPerSoldier, computeAll, pairKey, PORT_TILES, regionDefense, regionWeight, STATS } from './economy';
-import { allBuildings, banner, celebrate, fx, log, mapDirty, news, putBuilding, rand, removeBuilding, sfx } from './state';
+import {
+  allBuildings, banner, buildingAt, buildingSize, buildingTiles, celebrate, fx, log, mapDirty, news, putBuilding, rand, removeBuilding,
+  setBuildingTiles, sfx, trimBuildings,
+} from './state';
 import type { BuildingType, GameState, PairState } from './types';
 import { coalitionBuildBlock, coalitionWarBlock } from './elections';
 import { brothers, onBrotherWar, onLodgeDestroyed } from './lodge';
@@ -58,10 +62,12 @@ export function neighborCountries(g: GameState, a: number): Set<number> {
 }
 
 // ---------- стройка ----------
+// Здание — комплекс соседних клеток: на уровне 1 занимает FOOTPRINT[1] клеток, каждое улучшение пристраивает ещё одну.
+// Каждая клетка работает как отдельное здание, поэтому и цена — за все клетки, и дорожает она с каждой занятой клеткой.
 export function buildCost(g: GameState, ci: number, type: BuildingType, level: number, rid: number): number {
   const c = g.countries[ci];
   const w = regionWeight(g.regions[rid].pop);
-  return BUILDINGS[type].cost * LEVEL_COST[level] * w * c.baseProd * Math.pow(COST_GROWTH, STATS[ci].counts[type]);
+  return BUILDINGS[type].cost * LEVEL_COST[level] * FOOTPRINT[level] * w * c.baseProd * Math.pow(COST_GROWTH, STATS[ci].area[type]);
 }
 export const buildTime = (type: BuildingType, level: number) => Math.round(BUILDINGS[type].time * (level === 1 ? 1 : level * 1.5));
 
@@ -82,7 +88,7 @@ export function placeError(g: GameState, ci: number, tile: number, type: Buildin
   const rid = REGION_OF[tile];
   if (g.regions[rid].owner !== ci) return 'Не ваша территория';
   if (REGIONS[rid].center === tile) return 'Здесь центр региона';
-  if (g.buildings[tile]) return 'Клетка уже занята';
+  if (buildingAt(g, tile) >= 0) return 'Клетка уже занята';
   const def = BUILDINGS[type];
   const ter = terrainOf(tile);
   if (ter === 's') return 'Вечные льды — строить нельзя';
@@ -90,7 +96,54 @@ export function placeError(g: GameState, ci: number, tile: number, type: Buildin
   if (def.nearCity !== undefined && hexDist(tile, REGIONS[rid].center) > def.nearCity) return 'Слишком далеко от центра региона';
   if (def.coastal && !isCoastalTile(tile)) return 'Нужно побережье';
   if (def.fortress && ter !== 'm' && !isBorderTile(g, tile)) return 'Только горы или граница';
+  if (!growTiles(g, ci, type, tile, [tile], FOOTPRINT[1] - 1)) return `Тесно: зданию нужно ${FOOTPRINT[1]} свободные клетки рядом`;
   return coalitionBuildBlock(g, ci, type);
+}
+
+/** Клетка годится под пристройку: своя суша, не центр региона, свободна, местность — как у самого здания. */
+function extOk(g: GameState, ci: number, type: BuildingType, t: number): boolean {
+  if (t < 0 || isWater(t)) return false;
+  const rid = REGION_OF[t];
+  if (rid < 0 || g.regions[rid].owner !== ci || REGIONS[rid].center === t || buildingAt(g, t) >= 0) return false;
+  const ter = terrainOf(t);
+  const allowed = BUILDINGS[type].terrains;
+  return ter !== 's' && (!allowed || allowed.includes(ter));
+}
+
+/**
+ * need свободных клеток, чтобы нарастить комплекс (have — его клетки, anchor — главная). Растём плотно: сначала в своём
+ * регионе, ближе к главной клетке и вплотную к уже занятым. Можно и через границу своих регионов. null — места нет.
+ */
+export function growTiles(g: GameState, ci: number, type: BuildingType, anchor: number, have: number[], need: number): number[] | null {
+  const taken = new Set(have);
+  const out: number[] = [];
+  const home = REGION_OF[anchor];
+  while (out.length < need) {
+    let best = -1, bestScore = Infinity;
+    for (const t of taken) {
+      for (let d = 0; d < 6; d++) {
+        const n = NEIGH[t * 6 + d];
+        if (n < 0 || taken.has(n) || !extOk(g, ci, type, n)) continue;
+        let touch = 0;
+        for (let e = 0; e < 6; e++) if (taken.has(NEIGH[n * 6 + e])) touch++;
+        const score = (REGION_OF[n] !== home ? 3 : 0) + hexDist(n, anchor) - touch * 0.6;
+        if (score < bestScore) { bestScore = score; best = n; }
+      }
+    }
+    if (best < 0) return null;
+    taken.add(best);
+    out.push(best);
+  }
+  return out;
+}
+
+/** Поставить комплекс уровня 1 на клетку (место уже проверено placeError) — стройка начинается сразу. */
+export function layBuilding(g: GameState, ci: number, tile: number, type: BuildingType) {
+  const t = buildTime(type, 1);
+  const ext = growTiles(g, ci, type, tile, [tile], FOOTPRINT[1] - 1) ?? [];
+  putBuilding(g, tile, { type, level: 1, progress: t, total: t, ...(ext.length ? { tiles: ext } : {}) });
+  mapDirty.buildings = true;
+  if (ci === g.player) sfx('build');
 }
 
 export function startBuild(g: GameState, ci: number, tile: number, type: BuildingType): string | null {
@@ -102,35 +155,48 @@ export function startBuild(g: GameState, ci: number, tile: number, type: Buildin
   const c = g.countries[ci];
   if (c.money < cost) return 'Не хватает денег';
   c.money -= cost;
-  const t = buildTime(type, 1);
-  putBuilding(g, tile, { type, level: 1, progress: t, total: t });
-  mapDirty.buildings = true;
-  if (ci === g.player) sfx('build');
+  layBuilding(g, ci, tile, type);
   computeAll(g);
   return null;
 }
 
-export function upgradeError(g: GameState, ci: number, tile: number): string | null {
+/** Сколько клеток пристроит улучшение комплекса (на главной клетке tile). */
+export const upgradeGrowth = (g: GameState, tile: number) => {
   const b = g.buildings[tile];
+  return b && b.level < 3 ? Math.max(0, FOOTPRINT[b.level + 1] - buildingSize(b)) : 0;
+};
+
+/** tile — любая клетка комплекса. */
+export function upgradeError(g: GameState, ci: number, tile: number): string | null {
+  const at = buildingAt(g, tile);
+  const b = g.buildings[at];
   if (!b) return 'Здесь нет здания';
-  if (g.regions[REGION_OF[tile]].owner !== ci) return 'Не ваше здание';
+  if (g.regions[REGION_OF[at]].owner !== ci) return 'Не ваше здание';
   if (b.progress > 0) return 'Идёт строительство';
   if (b.level >= 3) return 'Максимальный уровень';
   const tech = BUILDINGS[b.type].techFor[b.level + 1];
   if (tech && !g.countries[ci].techs.includes(tech)) return `Нужна технология «${TECH_BY_ID[tech].name}»`;
   const s = STATS[ci];
   if (s.constructing >= s.slots) return `Одновременно можно строить не больше ${s.slots}`;
+  const grow = upgradeGrowth(g, at);
+  if (grow > 0 && !growTiles(g, ci, b.type, at, buildingTiles(at, b), grow)) {
+    return grow > 1 ? `Тесно: для улучшения рядом нужно ${grow} свободные клетки` : 'Тесно: для улучшения рядом нужна свободная клетка';
+  }
   return null;
 }
 
+/** tile — любая клетка комплекса. Улучшение поднимает уровень всех клеток и пристраивает новую. */
 export function startUpgrade(g: GameState, ci: number, tile: number): string | null {
   const err = upgradeError(g, ci, tile);
   if (err) return err;
+  tile = buildingAt(g, tile);
   const b = g.buildings[tile];
   const cost = buildCost(g, ci, b.type, b.level + 1, REGION_OF[tile]);
   const c = g.countries[ci];
   if (c.money < cost) return 'Не хватает денег';
   c.money -= cost;
+  const ext = growTiles(g, ci, b.type, tile, buildingTiles(tile, b), upgradeGrowth(g, tile)) ?? [];
+  if (ext.length) setBuildingTiles(g, tile, [...(b.tiles ?? []), ...ext], ext.length);
   b.level++;
   b.progress = b.total = buildTime(b.type, b.level);
   mapDirty.buildings = true;
@@ -166,14 +232,29 @@ export function upgradeBuilders(g: GameState, ci: number): string | null {
   return null;
 }
 
+/** Снести весь комплекс; tile — любая его клетка. */
 export function demolish(g: GameState, ci: number, tile: number) {
-  if (g.regions[REGION_OF[tile]].owner !== ci) return;
+  tile = buildingAt(g, tile);
+  if (tile < 0 || g.regions[REGION_OF[tile]].owner !== ci) return;
   removeBuilding(g, tile);
   mapDirty.buildings = true;
   computeAll(g);
 }
 
-/** Лучшая клетка для здания: регион побольше и где таких зданий меньше. */
+/** Доля свободной земли страны под стройку (0…1): суша без центров регионов и вечных льдов. */
+export function freeLand(g: GameState, ci: number): number {
+  let land = 0, free = 0;
+  for (const rid of STATS[ci].regions) {
+    for (const t of REGIONS[rid].tiles) {
+      if (t === REGIONS[rid].center || isWater(t) || terrainOf(t) === 's') continue;
+      land++;
+      if (buildingAt(g, t) < 0) free++;
+    }
+  }
+  return land ? free / land : 0;
+}
+
+/** Лучшая клетка для здания: регион побольше, где таких зданий меньше, и чтобы комплексу было куда расти. */
 export function bestTileFor(g: GameState, ci: number, type: BuildingType): number {
   let best = -1, bestScore = -Infinity;
   const perRegion = new Int32Array(REGIONS.length);
@@ -184,7 +265,9 @@ export function bestTileFor(g: GameState, ci: number, type: BuildingType): numbe
     const score0 = Math.log10(pop + 10) - 0.9 * perRegion[rid];
     for (const t of REGIONS[rid].tiles) {
       if (placeError(g, ci, t, type)) continue;
-      const score = score0 - hexDist(t, REGIONS[rid].center) * 0.01 + (type === 'fortress' && isBorderTile(g, t) ? 0.5 : 0);
+      let room = 0;
+      for (let d = 0; d < 6; d++) if (extOk(g, ci, type, NEIGH[t * 6 + d])) room++;
+      const score = score0 - hexDist(t, REGIONS[rid].center) * 0.01 + room * 0.03 + (type === 'fortress' && isBorderTile(g, t) ? 0.5 : 0);
       if (score > bestScore) { bestScore = score; best = t; }
     }
   }
@@ -350,6 +433,8 @@ export function transferRegion(g: GameState, rid: number, to: number, conquest: 
   } else {
     g.countries[to].unrest += Math.min(3, Math.max(0.5, share * 10));
   }
+  // комплексы на новой границе: пристройки на чужой теперь земле отпадают
+  trimBuildings(g);
   mapDirty.territory = true;
   mapDirty.buildings = true;
   fx({ kind: 'flash', tile: REGIONS[rid].center, color: colorOf(to) });

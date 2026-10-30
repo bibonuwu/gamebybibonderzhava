@@ -1,13 +1,13 @@
 // Голос народа: граждане сами просят и требуют — в зависимости от того, что на самом деле происходит в стране.
 // У каждого требования есть «давление» (0…1): чем хуже дела в этой сфере, тем громче люди. Боты отвечают своему народу тоже.
-import { addRel, bestTileFor, buildCost, buildTime, cname, enemiesOf, neighborCountries, peekPair } from './actions';
+import { addRel, bestTileFor, buildCost, cname, enemiesOf, layBuilding, neighborCountries, peekPair } from './actions';
 import { FOOD_BASE, PENSION_AGE, SAFETY_LEVELS } from './defs';
 import { computeAll, STATS } from './economy';
 import { fmt } from './format';
 import { buyArms, buyFood, buyQuote, foodDays } from './market';
 import { autoPenalty } from './prosperity';
 import { richTax, richTaxError, richTaxGain } from './society';
-import { log, mapDirty, news, pick, putBuilding, rand, sfx } from './state';
+import { log, news, pick, rand, sfx } from './state';
 import type { BuildingType, GameState, LogEntry, TempMod } from './types';
 import { REGIONS, REGION_OF } from './world';
 
@@ -88,10 +88,7 @@ function peopleBuild(g: GameState, ci: number, type: BuildingType): boolean {
   const c = C(g, ci);
   if (c.money < price) return false;
   c.money -= price;
-  const t = buildTime(type, 1);
-  putBuilding(g, tile, { type, level: 1, progress: t, total: t });
-  mapDirty.buildings = true;
-  if (ci === g.player) sfx('build');
+  layBuilding(g, ci, tile, type);
   computeAll(g);
   return true;
 }

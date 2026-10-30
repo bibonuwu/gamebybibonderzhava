@@ -134,7 +134,12 @@ export function resourceStats(g: GameState, i: number, s: CountryStats, gdp: num
     if (bal >= 0) money += bal * mk.sell * open * mk.price;
     else {
       money += bal * mk.avail * mk.price;
-      short += ((-bal * (1 - mk.avail)) / Math.max(1e-9, need)) * RES_INFO[k].short;
+      // чего не нашлось на рынке, берём из стратегического резерва (биржа, exchange.ts)
+      const miss = -bal * (1 - mk.avail);
+      const draw = Math.min(miss, (k === 'oil' ? c.oilStock : c.lithStock) ?? 0);
+      if (k === 'oil') s.oilDraw = draw;
+      else s.lithDraw = draw;
+      short += ((miss - draw) / Math.max(1e-9, need)) * RES_INFO[k].short;
     }
   }
   s.resMoney = money;

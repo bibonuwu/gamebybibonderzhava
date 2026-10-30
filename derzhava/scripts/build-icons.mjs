@@ -29,7 +29,7 @@ const MAP = {
   '💰': ['two-coins', 'gold'], '🪙': ['crown-coin', 'gold'], '💵': ['banknote', 'green'], '💸': ['pay-money', 'green'],
   '🧠': ['brain', 'pink'], '👥': ['meeple-group', 'cyan'], '⚖': ['scales', 'gold'], '🔺': ['x-triangle', 'red'],
   '💪': ['biceps', 'orange'], '🌾': ['wheat', 'gold'], '🔫': ['pistol-gun', 'steel'], '🧑‍🔬': ['microscope', 'blue'],
-  '💎': ['gems', 'cyan'], '🏦': ['bank', 'ivory'],
+  '💎': ['gems', 'cyan'], '🏦': ['bank', 'ivory'], '🧈': ['gold-bar', 'gold'], '💹': ['profit', 'green'],
   // вкладки и интерфейс
   '🗺': ['treasure-map', 'parchment'], '📜': ['scroll-unfurled', 'parchment'], '🏗': ['crane', 'orange'],
   '⚔': ['crossed-swords', 'steel'], '🏪': ['shop', 'orange'], '📊': ['histogram', 'blue'], '📰': ['newspaper', 'ivory'],

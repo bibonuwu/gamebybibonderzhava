@@ -1,5 +1,6 @@
 // Текущая партия, подписки интерфейса, уведомления.
 import type { Building, GameState, LogEntry } from './types';
+import { N, REGION_OF } from './world';
 
 let current: GameState | null = null;
 export const getGame = () => current;
@@ -144,19 +145,39 @@ export const mapDirty = { territory: true, buildings: true };
 // ---------- здания: быстрый обход ----------
 // for…in по g.buildings на тысячах зданий медленный (каждый ключ — строка), а здания обходят много раз за день.
 // Поэтому держим готовый список клеток по возрастанию — в том же порядке, что и for…in, — и пересобираем его,
-// только когда здание появилось или исчезло. Ставить и сносить здания — только через putBuilding / removeBuilding.
+// только когда здание появилось, исчезло или поменяло клетки. Ставить, сносить и перекраивать здания — только через
+// putBuilding / removeBuilding / setBuildingTiles / ruinTile.
 let indexed: GameState['buildings'] | null = null;
 const index = { tiles: [] as number[], list: [] as Building[] };
+/** Клетка → главная клетка комплекса, который на ней стоит (-1 — свободна). */
+const occupied = new Int32Array(N).fill(-1);
 
-/** Все здания: tiles[k] — клетка, list[k] — здание на ней. Внутри обхода здания не ставить и не сносить. */
+/** Все здания: tiles[k] — главная клетка, list[k] — здание на ней. Внутри обхода здания не ставить и не сносить. */
 export function allBuildings(g: GameState): { readonly tiles: readonly number[]; readonly list: readonly Building[] } {
   if (indexed !== g.buildings) {
     indexed = g.buildings;
     index.tiles = Object.keys(g.buildings).map(Number);
     index.list = index.tiles.map((t) => g.buildings[t]);
+    occupied.fill(-1);
+    for (let k = 0; k < index.tiles.length; k++) {
+      const t = index.tiles[k];
+      occupied[t] = t;
+      for (const x of index.list[k].tiles ?? []) occupied[x] = t;
+    }
   }
   return index;
 }
+/** Главная клетка здания-комплекса, которое занимает клетку (-1 — клетка свободна). */
+export function buildingAt(g: GameState, tile: number): number {
+  allBuildings(g);
+  return tile >= 0 ? occupied[tile] : -1;
+}
+/** Все клетки комплекса: главная и пристройки. */
+export const buildingTiles = (tile: number, b: Building): number[] => (b.tiles?.length ? [tile, ...b.tiles] : [tile]);
+export const buildingSize = (b: Building) => 1 + (b.tiles?.length ?? 0);
+/** Сколько клеток комплекса уже работает: пристройки, которые ещё строятся, не в счёт. */
+export const buildingWorking = (b: Building) => buildingSize(b) - (b.progress > 0 ? b.add ?? 0 : 0);
+
 export function putBuilding(g: GameState, tile: number, b: Building) {
   g.buildings[tile] = b;
   indexed = null;
@@ -164,6 +185,49 @@ export function putBuilding(g: GameState, tile: number, b: Building) {
 export function removeBuilding(g: GameState, tile: number) {
   delete g.buildings[tile];
   indexed = null;
+}
+/** Новые пристройки комплекса; add — сколько последних из них ещё строится. */
+export function setBuildingTiles(g: GameState, tile: number, tiles: number[], add = 0) {
+  const b = g.buildings[tile];
+  if (tiles.length) b.tiles = tiles;
+  else delete b.tiles;
+  if (add > 0) b.add = add;
+  else delete b.add;
+  indexed = null;
+}
+
+/** Разрушить одну клетку комплекса: он её теряет, а последняя клетка — и есть всё здание. false — клетка была свободна. */
+export function ruinTile(g: GameState, tile: number): boolean {
+  const at = buildingAt(g, tile);
+  if (at < 0) return false;
+  const b = g.buildings[at];
+  const rest = b.tiles ?? [];
+  if (!rest.length) {
+    removeBuilding(g, at);
+    return true;
+  }
+  const keep = rest.filter((x) => x !== tile);
+  // пристройки после индекса work ещё строятся
+  const work = rest.length - (b.add ?? 0);
+  const add = (b.add ?? 0) - (rest.indexOf(tile) >= work ? 1 : 0);
+  if (at === tile) {
+    // разрушена главная клетка — главной становится первая пристройка
+    removeBuilding(g, at);
+    putBuilding(g, keep[0], { ...b });
+    setBuildingTiles(g, keep[0], keep.slice(1), Math.min(add, keep.length - 1));
+  } else setBuildingTiles(g, at, keep, add);
+  return true;
+}
+
+/** Пристройки на земле, которая отошла к другой стране (или стала ничьей), отпадают от комплекса. */
+export function trimBuildings(g: GameState) {
+  const { tiles, list } = allBuildings(g);
+  const cut: number[] = [];
+  for (let k = 0; k < tiles.length; k++) {
+    const own = g.regions[REGION_OF[tiles[k]]].owner;
+    for (const t of list[k].tiles ?? []) if (g.regions[REGION_OF[t]].owner !== own) cut.push(t);
+  }
+  for (const t of cut) ruinTile(g, t);
 }
 
 export function rand(g: GameState): number {

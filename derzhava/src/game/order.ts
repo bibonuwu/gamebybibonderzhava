@@ -3,11 +3,12 @@
 // Братья платят взносы (часть — в нашу казну), дружат, не нападают на нас и друг на друга, а за 🔺 влияние
 // исполняют волю мастера: собрание, касса, клятва братства, бойкот, «Братья, к оружию!».
 // Официально зарегистрированная ложа получает статус наблюдателя ООН: братья голосуют в Генассамблее вместе с нами.
+// Если на мастера напали, братья раз в месяц шлют ему деньги и оружие.
 import { addRel, atWar, cname, declareWar, enemiesOf, pair, peekPair, warError } from './actions';
 import { ORDER_SHARE } from './defs';
 import { computeAll, STATS } from './economy';
 import { fmt } from './format';
-import { isMember, JOIN_WISH, LODGE_NAME, type OpChoice } from './lodge';
+import { isMember, JOIN_WISH, LODGE_NAME, sendAid, type OpChoice } from './lodge';
 import { banner, log, news, pick, rand, sfx } from './state';
 import type { GameState, TempMod } from './types';
 import { COUNTRY_DEFS, vb } from './world';
@@ -244,6 +245,15 @@ export function tickOrder(g: GameState) {
       if (g.rel[me][k] >= -25 || rand(g) >= 0.35) continue;
       dropBrother(g, k);
       log(g, `🚪 ${cname(g, k)} ${vb(k, 'вышел', 'вышла', 'вышли')} из ложи «${O.name}»: отношения с нами испортились`, 'bad');
+    }
+  }
+  // на мастера напали — братья раз в месяц шлют деньги и оружие (официальная ложа — щедрее)
+  if (g.day % 30 === 11 && g.un.some((cs) => cs.victim === me && cs.until === undefined)) {
+    const donors = orderMembers(g).filter((k) => !atWar(g, k, me) && g.countries[k].money > 0);
+    if (donors.length) {
+      const { money, arms } = sendAid(g, me, donors, O.official ? 1.5 : 1);
+      sfx('coins');
+      log(g, `${O.emblem} Братья ложи «${O.name}» пришли на помощь мастеру: +${fmt(money)} 💰${arms >= 1 ? ` и ${fmt(arms)} 🔫` : ''}`, 'good');
     }
   }
   // правители иногда сами просятся в ложу — письмом

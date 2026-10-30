@@ -10,6 +10,7 @@ import { computeAll, STATS } from './economy';
 import { fmt, fmtDate } from './format';
 import { foodDays } from './market';
 import { moodOf } from './people';
+import { convene } from './session';
 import { allBuildings, banner, log, news, pick, rand, sfx } from './state';
 import type { BuildingType, ElectionPromise, ElectionState, GameState, GovType, Personality } from './types';
 import { REGION_OF } from './world';
@@ -246,6 +247,7 @@ function vote(g: GameState) {
       options: [{ label: 'Принять', hint: 'стабильность −15, доверие −20, отношения с демократиями −10' }],
     }, 0);
     sfx('alarm');
+    convene(g, 'democracy', g.player, { note: 'фальсификации на выборах' });
     computeAll(g);
     return;
   }
@@ -328,6 +330,7 @@ export function resolveElectionEvent(g: GameState, option: number) {
       relFree(g, -15);
       g.counters.electionsStolen = (g.counters.electionsStolen ?? 0) + 1;
       log(g, '✊ Мы не признали итоги выборов. На улицах — протесты', 'bad', false);
+      convene(g, 'democracy', g.player, { note: 'непризнание итогов выборов' });
     }
   }
   computeAll(g);
@@ -418,7 +421,17 @@ export function actError(g: GameState, id: string): string | null {
   if (!isFree(me(g).gov) || !E.campaign) return 'Кампания ещё не началась';
   if ((E.cd[id] ?? 0) > g.day) return `Снова можно через ${Math.ceil(E.cd[id] - g.day)} дн.`;
   if (id === 'rally' && me(g).money < rallyCost(g)) return 'Не хватает денег';
+  if ((id === 'rig' || id === 'cancel') && (E.observers ?? 0) > g.day) return 'Наблюдатели ООН не позволят';
   return null;
+}
+
+/** ООН потребовала честных выборов: через 60 дней и под наблюдением — ни подтасовать, ни отменить. */
+export function observeElections(g: GameState) {
+  const E = g.elections;
+  if (E.next > g.day + 60) E.next = g.day + 60;
+  E.observers = E.next + 1;
+  E.rigged = 0;
+  log(g, `🗳️ Выборы — через ${Math.max(0, Math.ceil(E.next - g.day))} дн., под наблюдением ООН`, 'info', false);
 }
 
 export function campaignAct(g: GameState, id: string): string | null {
@@ -456,6 +469,7 @@ export function campaignAct(g: GameState, id: string): string | null {
     g.counters.electionsCancelled = (g.counters.electionsCancelled ?? 0) + 1;
     sfx('alarm');
     log(g, `🛑 Выборы отменены: чрезвычайное положение. Новые — ${fmtDate(E.next)}`, 'bad');
+    convene(g, 'democracy', g.player, { note: 'отмена выборов' });
   }
   computeAll(g);
   return null;

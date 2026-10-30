@@ -8,6 +8,7 @@ import {
   BLAST, FLIGHT_DAYS, HBOMB_DAYS, hasBomb, hbombsOf, interceptChance, isNuclear, isThermo, launchNuke, NUKE_DAYS, nukeBuildError,
   nukeCost, nukesOf, startNuke, strikeError, THERMO_SPILL, THERMO_TECH,
 } from '../../game/nuclear';
+import { sessionPreview } from '../../game/session';
 import { getGame } from '../../game/state';
 import type { GameState, Missile } from '../../game/types';
 import { COUNTRY_DEFS, REGIONS } from '../../game/world';
@@ -66,7 +67,8 @@ export function NuclearCard({ map }: { map: MapView }) {
           + (thermo ? `Радиация накроет и соседние регионы (−${Math.round(THERMO_SPILL.kill * 100)}% населения, заражение ${THERMO_SPILL.fallout} дн.) — даже если они наши. ` : '')
           + 'Весь мир осудит вас: отношения со всеми странами упадут, стабильность тоже.'
           + (isNuclear(g, owner) ? ` У страны ${COUNTRY_DEFS[owner].name} есть ядерное оружие — она ответит ударом на удар.` : '')
-          + (shield > 0 ? ` ПРО противника может сбить ракету (${Math.round(shield * 100)}%).` : ''),
+          + (shield > 0 ? ` ПРО противника может сбить ракету (${Math.round(shield * 100)}%).` : '')
+          + ` ${sessionPreview(g, 'nukestrike', me, owner)}`,
         ok: () => {
           const err = launchNuke(g, me, rid, false, thermo);
           report(err);
@@ -168,6 +170,9 @@ function BuildButton({ thermo }: { thermo: boolean }) {
   const me = g.player;
   const cost = nukeCost(g, me, thermo);
   const err = nukeBuildError(g, me, thermo);
+  const c = g.countries[me];
+  // первая бомба взорвётся на полигоне — и ООН соберёт чрезвычайную сессию
+  const test = thermo ? !c.hbombTested : !c.nukeTested;
   return (
     <>
       <button class={`btn block nuke-build ${thermo ? 'danger' : ''}`} disabled={!!err} onClick={() => report(startNuke(g, me, thermo))}>
@@ -175,6 +180,7 @@ function BuildButton({ thermo }: { thermo: boolean }) {
         <span class="h">💰 {fmt(cost.money)} · 🧠 {fmt(cost.brains)} · {thermo ? HBOMB_DAYS : NUKE_DAYS} дн.</span>
       </button>
       {err && <div class="small muted">{err}</div>}
+      {!err && test && <div class="small down">Первая бомба — испытание на полигоне. {sessionPreview(g, 'nuketest', me)}</div>}
     </>
   );
 }

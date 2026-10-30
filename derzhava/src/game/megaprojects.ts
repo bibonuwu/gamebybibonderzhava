@@ -1,12 +1,14 @@
 // Куда тратить большие деньги в поздней игре.
-// • Мегапроекты: национальные стройки в три этапа — магистрали, умные города, защита побережья, энергопереход,
-//   программа здоровья и космическая программа. Цена — в днях нынешнего дохода, так что дорого всегда.
+// • Мегапроекты: национальные стройки в три этапа — магистрали, умные города, защита от стихии, энергопереход,
+//   программа здоровья, космос, хлеб, вода, наука, цифра, финансы, мирный атом, оборона и культура.
+//   Цена — в днях нынешнего дохода, так что дорого всегда.
 //   Космос — гонка: кто первым высадится на Луну и основает колонию на Марсе, тот прославится на весь мир.
 // • Программы развития: год вкладываться в бедную страну — она богатеет, дружит с нами и голосует в ООН заодно.
 import { addRel, atWar, cname, enemiesOf } from './actions';
 import { TECH_BY_ID, type TechMods } from './defs';
 import { computeAll, STATS } from './economy';
 import { fmt } from './format';
+import { isNuclear } from './nuclear';
 import { incomeNow } from './prosperity';
 import { banner, fx, log, news, pick, rand, sfx } from './state';
 import type { Country, GameState, Personality } from './types';
@@ -21,6 +23,7 @@ export interface MegaDef {
   stages: MegaStage[];
   mods: (n: number) => Partial<TechMods>;
   pref: Personality[];
+  onDone?: (g: GameState, i: number, stage: number) => void; // разовый эффект готового этапа
 }
 
 export const MEGAS: MegaDef[] = [
@@ -46,6 +49,34 @@ export const MEGAS: MegaDef[] = [
       { name: 'Колония на Марсе', days: 240, cost: 350, brains: 1000, tech: 'nuclear_rockets' },
     ],
     mods: (n) => ({ stab: 2 * n, brains: 1 + 0.05 * n, prod: 1 + 0.02 * n }), pref: ['scientist', 'aggressor'] },
+  { id: 'agro', name: 'Хлебная держава', icon: '🚜', desc: 'каждый этап: урожай +10%, лимит населения +3%',
+    stages: [{ name: 'Орошение степей', days: 100, cost: 70 }, { name: 'Элеваторы и агрохолдинги', days: 130, cost: 130, tech: 'vertical_farms' }, { name: 'Агрогорода будущего', days: 160, cost: 220, tech: 'lab_meat' }],
+    mods: (n) => ({ food: 1 + 0.1 * n, cap: 1 + 0.03 * n }), pref: ['cautious', 'fanatic', 'trader'] },
+  { id: 'water', name: 'Вода для пустынь', icon: '💧', desc: 'каждый этап: лимит населения +5%, урожай +4%, вред от потепления −10%',
+    stages: [{ name: 'Каналы и водохранилища', days: 110, cost: 80 }, { name: 'Опреснительные заводы', days: 140, cost: 150, tech: 'green_energy' }, { name: 'Зелёная стена против пустыни', days: 170, cost: 230, tech: 'drought_crops' }],
+    mods: (n) => ({ cap: 1 + 0.05 * n, food: 1 + 0.04 * n, climate: 1 - 0.1 * n }), pref: ['cautious', 'fanatic'] },
+  { id: 'science', name: 'Наукоград', icon: '🔬', desc: 'каждый этап: 🧠 +7%, производительность +2%',
+    stages: [{ name: 'Технопарк', days: 110, cost: 90, tech: 'digital_edu' }, { name: 'Академгородок', days: 150, cost: 170, tech: 'supercomputers' }, { name: 'Большой адронный коллайдер', days: 210, cost: 300, brains: 600, tech: 'quantum' }],
+    mods: (n) => ({ brains: 1 + 0.07 * n, prod: 1 + 0.02 * n }), pref: ['scientist'] },
+  { id: 'digital', name: 'Цифровое государство', icon: '🌐', desc: 'каждый этап: производительность +3%, 🧠 +3%, стабильность +1',
+    stages: [{ name: 'Интернет в каждый дом', days: 100, cost: 80 }, { name: 'Электронное правительство', days: 130, cost: 150, tech: 'supercomputers' }, { name: 'Квантовая связь', days: 170, cost: 250, tech: 'quantum' }],
+    mods: (n) => ({ prod: 1 + 0.03 * n, brains: 1 + 0.03 * n, stab: n }), pref: ['scientist', 'trader'] },
+  { id: 'finance', name: 'Мировой финансовый центр', icon: '🏦', desc: 'каждый этап: торговля +8%, производительность +3%',
+    stages: [{ name: 'Фондовая биржа', days: 100, cost: 90 }, { name: 'Деловой квартал небоскрёбов', days: 140, cost: 170, tech: 'global_logistics' }, { name: 'Своя мировая валюта', days: 180, cost: 280, tech: 'digital_money' }],
+    mods: (n) => ({ trade: 1 + 0.08 * n, prod: 1 + 0.03 * n }), pref: ['trader'] },
+  { id: 'atom', name: 'Мирный атом', icon: '⚛️', desc: 'каждый этап: производительность +3%, нефти −10%, выбросы −8%',
+    stages: [{ name: 'Атомные электростанции', days: 130, cost: 110, tech: 'nuclear_power' }, { name: 'Атомный ледокольный флот', days: 150, cost: 170, tech: 'thorium' }, { name: 'Термоядерный реактор', days: 210, cost: 320, brains: 500, tech: 'fusion' }],
+    mods: (n) => ({ prod: 1 + 0.03 * n, oil: 1 - 0.1 * n, emis: 1 - 0.08 * n }), pref: ['scientist', 'aggressor'] },
+  { id: 'shield', name: 'Щит Родины', icon: '🛡️', desc: 'каждый этап: оборона +10%, вооружение +4%. Купол ПРО сбивает ядерные ракеты на 20% чаще',
+    stages: [{ name: 'Линия укреплений', days: 110, cost: 80 }, { name: 'Эшелонированная ПВО', days: 140, cost: 150, tech: 'hypersonic' }, { name: 'Противоракетный купол', days: 180, cost: 260, tech: 'missile_defense' }],
+    mods: (n) => ({ defense: 1 + 0.1 * n, weapons: 1 + 0.04 * n }), pref: ['aggressor', 'cautious'] },
+  { id: 'culture', name: 'Культурная столица мира', icon: '🎭', desc: 'каждый этап: стабильность +2, ожидания растут на 8% медленнее, а мир теплеет к нам: отношения со всеми +4',
+    stages: [{ name: 'Национальный музей и театр', days: 100, cost: 70 }, { name: 'Киностудия мирового уровня', days: 130, cost: 130, tech: 'dialogue' }, { name: 'Всемирная выставка', days: 160, cost: 220, tech: 'soft_power' }],
+    mods: (n) => ({ stab: 2 * n, expect: 1 - 0.08 * n }), pref: ['trader', 'fanatic', 'cautious'],
+    onDone: (g, i) => {
+      g.countries.forEach((o, j) => { if (o.alive && j !== i && !atWar(g, i, j)) addRel(g, i, j, 4); });
+      if (i === g.player) log(g, '🎭 Наша культура покоряет мир: отношения со всеми странами +4', 'good');
+    } },
 ];
 export const MEGA_BY_ID = Object.fromEntries(MEGAS.map((m) => [m.id, m])) as Record<string, MegaDef>;
 /** Этапы космической гонки: кто первый — получает славу. */
@@ -124,6 +155,7 @@ function finishMega(g: GameState, i: number) {
   c.mega = undefined;
   (c.megas ??= {})[m.id] = m.stage;
   const st = def.stages[m.stage - 1];
+  def.onDone?.(g, i, m.stage);
   fx({ kind: 'float', tile: REGIONS[c.capital].center, text: def.icon });
   const race = m.id === 'space' ? RACE[m.stage] : undefined;
   const first = race && (g.firsts ??= {})[race.key] === undefined;
@@ -221,6 +253,11 @@ export function botMegas(g: GameState, i: number) {
       if (m.id === 'energy' && STATS[i].oilNeed > STATS[i].oilProd * 1.5) sc *= 1.6;
       if (m.id === 'health' && STATS[i].pensionCost > STATS[i].taxIncome * 0.05) sc *= 1.6;
       if (m.id === 'space') sc *= next.stage >= 2 ? 2.2 : 1.3; // гонка за славой
+      if (m.id === 'agro' && (STATS[i].hunger > 0 || STATS[i].foodProd < STATS[i].foodCons)) sc *= 1.8;
+      if (m.id === 'water' && STATS[i].popCap > 0 && STATS[i].civPop / STATS[i].popCap > 0.85) sc *= 1.5;
+      if (m.id === 'atom' && STATS[i].oilNeed > STATS[i].oilProd * 1.5) sc *= 1.4;
+      if (m.id === 'culture' && c.stability < 50) sc *= 1.6;
+      if (m.id === 'shield' && isNuclear(g, i)) sc *= 0.7; // своя бомба и так пугает соседей
       if (sc > bestScore) { bestScore = sc; best = m.id; }
     }
     if (best) {

@@ -32,6 +32,8 @@ export const BUILDING_TYPES = Object.keys(BUILDINGS) as BuildingType[];
 export const LEVEL_COST = [0, 1, 2.6, 6];
 export const LEVEL_EFFECT = [0, 1, 2.5, 5];
 export const COST_GROWTH = 1.06;
+/** Сколько клеток занимает здание-комплекс на уровне (индекс = уровень): улучшение пристраивает ещё клетку. */
+export const FOOTPRINT = [0, 2, 3, 4];
 
 // ---------- строители: каждый уровень — ещё одна стройплощадка и стройка быстрее ----------
 export const BUILDERS_MAX = 10;

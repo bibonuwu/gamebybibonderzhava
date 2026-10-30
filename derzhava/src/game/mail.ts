@@ -5,7 +5,8 @@ import { addRel, enemiesOf, peekPair } from './actions';
 import { START_YEAR } from './defs';
 import { computeAll, STATS } from './economy';
 import { fmt } from './format';
-import { BAN_STAB, banLodge, joinLodge, LODGE_NAME, RANKS, refuseLodge } from './lodge';
+import { resTitle } from './assembly';
+import { answerPlea, BAN_STAB, banLodge, joinLodge, LODGE_NAME, PLEA, PLEA_REWARD, RANKS, refuseLodge } from './lodge';
 import { acceptAsk, inOrder, orderMembers, refuseAsk } from './order';
 import { allBuildings, log, pick, rand, sfx } from './state';
 import type { GameState, Letter, LetterGift, TempMod } from './types';
@@ -335,7 +336,7 @@ const MAIL: MailDef[] = [
     const R = RANKS[r] ?? RANKS[1];
     const text: Record<number, string[]> = {
       1: [
-        'Брат! Ложа видит ваше усердие и возводит вас в степень Подмастерья. Отныне вам открыты биржевой сговор и компромат — услуги для тех, кто умеет молчать.',
+        'Брат! Ложа видит ваше усердие и возводит вас в степень Подмастерья. Отныне вам открыты биржевой сговор, компромат, голоса братьев в ООН и тайное знание наших учёных — услуги для тех, кто умеет молчать.',
         'Помните: каждое тайное дело оставляет след, а газетчики не дремлют. Прилагаем ключ от библиотеки ложи — там есть книги, которых нет больше нигде.',
       ],
       2: [
@@ -354,6 +355,27 @@ const MAIL: MailDef[] = [
       gift: r === 1 ? { brains: brains(g) * 40, label: 'Ключ от тайной библиотеки' } : r === 2 ? { money: inc(g) * 40, label: 'Дар братьев-банкиров' } : { stab: 3, label: 'Тайная церемония' },
     };
   } },
+  // брат по ложе в беде просит о помощи (см. lodge.ts → plea)
+  { id: 'lodge_plea', follow: true, make: (g, vals) => {
+    const [k, kind, amount, rid] = vals;
+    if (g.lodge.status !== 'member' || !g.countries[k]?.alive) return null;
+    const r = g.assembly.res.find((x) => x.id === rid);
+    if (kind === PLEA.vote && (!r || r.passed !== undefined)) return null;
+    const ask: [string, string] = kind === PLEA.money
+      ? [`Казна пуста, народ ропщет, а братья-банкиры не успевают. Прошу вас ссудить ${fmt(amount)} 💰. Вернуть не обещаю — но ложа помнит добро.`, `Отправить ${fmt(amount)} 💰`]
+      : kind === PLEA.arms
+        ? [`Враг у ворот, а склады пустеют. Прошу братской помощи: ${fmt(amount)} комплектов оружия решат исход боёв.`, `Отправить ${fmt(amount)} 🔫`]
+        : [`В ООН против нас голосуют — «${r ? resTitle(g, r) : ''}». Ваш голос «против» и слово в кулуарах многое изменят.`, 'Голосовать «против»'];
+    return {
+      from: `Брат из страны ${cname(k)}`, icon: '🤝', subject: 'Брат в беде', art: 'lodge', paper: 'lodge', stamp: '👁️', seal: '#8a6a24',
+      body: ['Брат! Пишу вам под знаком циркуля и наугольника.', ask[0], 'Если откажете — я пойму. Но ложа видит всё.'],
+      sign: `△ Ваш брат, правитель страны ${cname(k)}`,
+      replies: [
+        { label: ask[1], hint: `отношения +15, +🔺${PLEA_REWARD} влияния и заслуг` },
+        { label: 'Отказать', hint: 'отношения −8, −🔺5' },
+      ],
+    };
+  }, answer: (g, L, o) => answerPlea(g, L.vals ?? [], o === 0) },
   // своя ложа игрока: правитель сам просится в братья (см. order.ts)
   { id: 'order_ask', follow: true, make: (g, vals) => {
     const k = vals[0] ?? -1;
@@ -1118,6 +1140,12 @@ function deliver(g: GameState, def: MailDef, vals: number[] = [], target?: numbe
   g.counters.letters = (g.counters.letters ?? 0) + 1;
   sfx('mail');
   return true;
+}
+
+/** Срочное письмо — сразу, без передышки между письмами (просьба брата не ждёт). */
+export function mailNow(g: GameState, tpl: string, vals: number[]) {
+  const def = BY_ID[tpl];
+  return def ? deliver(g, def, vals) : false;
 }
 
 /** Раз в день: продолжения цепочек, сюжетные письма, иногда — обычные. */

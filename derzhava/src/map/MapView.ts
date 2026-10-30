@@ -1,7 +1,7 @@
 // Отрисовка гекс-карты (PixiJS): рельеф, границы, города, здания, бои, управление пальцами.
 import { Application, BlurFilter, Container, Graphics, Rectangle, Sprite, Text, Texture } from 'pixi.js';
 import { BUILDINGS } from '../game/defs';
-import { mapDirty, mapFx } from '../game/state';
+import { buildingAt, buildingTiles, mapDirty, mapFx } from '../game/state';
 import { iconCanvas } from '../ui/icons';
 import { WONDER_BY_ID } from '../game/wonders';
 import type { BuildingType, GameState } from '../game/types';
@@ -53,6 +53,13 @@ function shade(color: number, k: number) {
 }
 
 const EMOJI_FONT = '"Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif';
+
+/** Цвет участка здания-комплекса на карте. */
+const COMPLEX_COLOR: Record<BuildingType, number> = {
+  factory: 0xa3abb8, university: 0x6c9cff, temple: 0xf2cf6b, hospital: 0xff7b7b,
+  farm: 0xe8d468, barracks: 0xb8915e, port: 0x4fc3e0, fortress: 0x9aa4b0,
+};
+const WING_SCALE = 0.17; // значок пристройки — мельче главного (0.2)
 
 const backOut = (p: number) => 1 + 2.7 * Math.pow(p - 1, 3) + 1.7 * Math.pow(p - 1, 2);
 
@@ -128,6 +135,10 @@ export class MapView {
   private labelByRegion = new Map<number, Text>();
   private countryText = new Map<number, Text>();
   private buildSprites = new Map<number, Sprite>();
+  /** Пристройки комплексов: клетка → значок. */
+  private wingSprites = new Map<number, Sprite>();
+  /** Участки комплексов (заливка и рамка) — под значками зданий. */
+  private complexG = new Graphics();
   private battleSprites = new Map<number, Sprite>();
   private rebelSprites = new Map<number, Sprite>();
   private textures = new Map<string, Texture>();
@@ -171,6 +182,7 @@ export class MapView {
       this.fxLayer, this.glowG, this.borderG, this.selG, own(this.hoverG), this.selRing, own(this.pingG), this.cityG, this.buildLayer, own(this.progressG),
       this.wonderLayer, this.battleLayer, this.seaOver, this.cloudLayer, this.cityLabels, this.foreignLabels, this.countryLabels,
     );
+    this.buildLayer.addChild(this.complexG);
     this.screenFlash.alpha = 0;
     this.app.stage.addChild(this.screenFlash);
     if (!sf) this.drawWater();
@@ -615,15 +627,87 @@ export class MapView {
     return this.bake(key, c);
   }
 
+  /** Значок пристройки комплекса: тот же значок, мельче и без подложки. */
+  private wingTexture(type: BuildingType, building: boolean): Texture {
+    const key = `wing-${type}-${building ? 1 : 0}`;
+    let tex = this.textures.get(key);
+    if (tex) return tex;
+    const c = new Container();
+    const ic = this.glyph(BUILDINGS[type].icon, 54, 30, 30);
+    ic.alpha = building ? 0.4 : 0.92;
+    c.addChild(ic);
+    return this.bake(key, c);
+  }
+
+  /** Участки комплексов: заливка цветом здания и общая рамка; выбранный комплекс — белой рамкой. */
+  private drawComplexes() {
+    const g = this.complexG.clear();
+    const gm = this.game;
+    if (!gm) return;
+    const sel = this.selected >= 0 && !isWater(this.selected) ? buildingAt(gm, this.selected) : -1;
+    for (const key in gm.buildings) {
+      const tile = +key;
+      if (gm.regions[REGION_OF[tile]].owner !== gm.player) continue;
+      const b = gm.buildings[tile];
+      const all = buildingTiles(tile, b);
+      const color = COMPLEX_COLOR[b.type];
+      // недостроенные клетки: весь новый комплекс или пристройки, которые ещё строятся
+      const from = b.progress <= 0 ? all.length : b.level === 1 ? 0 : all.length - (b.add ?? 0);
+      all.forEach((t, j) => {
+        const [cx, cy] = tileCenter(t);
+        g.poly(CORNERS.flatMap(([x, y]) => [cx + x * 0.97, cy + y * 0.97])).fill({ color, alpha: j >= from ? 0.12 : 0.3 });
+      });
+      const set = new Set(all);
+      const outline = () => {
+        for (const t of all) {
+          const [cx, cy] = tileCenter(t);
+          for (let d = 0; d < 6; d++) {
+            if (set.has(NEIGH[t * 6 + d])) continue;
+            const [a, c] = EDGE[d];
+            g.moveTo(cx + CORNERS[a][0] * 0.9, cy + CORNERS[a][1] * 0.9).lineTo(cx + CORNERS[c][0] * 0.9, cy + CORNERS[c][1] * 0.9);
+          }
+        }
+      };
+      const hi = tile === sel;
+      // путь сбрасывается после каждого stroke — рисуем его дважды: тёмная подводка и цветная рамка
+      outline();
+      g.stroke({ width: hi ? 4 : 2.6, color: 0x0e1c30, alpha: 0.45, cap: 'round' });
+      outline();
+      g.stroke({ width: hi ? 2.2 : 1.2, color: hi ? 0xffffff : shade(color, 1.2), alpha: 0.95, cap: 'round' });
+    }
+  }
+
   private syncBuildings() {
     const gm = this.game!;
     const seen = new Set<number>();
+    const seenWings = new Set<number>();
     for (const key in gm.buildings) {
       const tile = +key;
       // чужие здания не показываем: там только название страны
       if (gm.regions[REGION_OF[tile]].owner !== gm.player) continue;
       const b = gm.buildings[tile];
       seen.add(tile);
+      // пристройки комплекса: свой маленький значок на каждой клетке
+      const ext = b.tiles ?? [];
+      const from = b.progress <= 0 ? ext.length : b.level === 1 ? 0 : ext.length - (b.add ?? 0);
+      ext.forEach((t, j) => {
+        seenWings.add(t);
+        const wtex = this.wingTexture(b.type, j >= from);
+        let ws = this.wingSprites.get(t);
+        if (!ws) {
+          ws = new Sprite(wtex);
+          ws.anchor.set(0.5);
+          const [cx, cy] = tileCenter(t);
+          ws.position.set(cx, cy);
+          ws.scale.set(WING_SCALE);
+          this.buildLayer.addChild(ws);
+          this.wingSprites.set(t, ws);
+          if (this.popIn && this.fancy) this.bounce(ws, 'in', WING_SCALE);
+        } else if (ws.texture !== wtex) {
+          if (j < from && this.fancy) this.bounce(ws, 'done', WING_SCALE);
+          ws.texture = wtex;
+        }
+      });
       const building = b.progress > 0;
       const shownLevel = building && b.level > 1 ? b.level - 1 : b.level;
       const tkey = `${b.type}-${shownLevel}-${building ? 1 : 0}`;
@@ -655,6 +739,13 @@ export class MapView {
         this.buildKeys.delete(tile);
       }
     }
+    for (const [tile, ws] of this.wingSprites) {
+      if (!seenWings.has(tile)) {
+        ws.destroy();
+        this.wingSprites.delete(tile);
+      }
+    }
+    this.drawComplexes();
   }
 
   /** Свои стройки — для колец прогресса. */
@@ -687,13 +778,13 @@ export class MapView {
     }
   }
 
-  /** Здание «выпрыгивает» на карту (in) или подпрыгивает по готовности (done). */
-  private bounce(sp: Sprite, mode: 'in' | 'done') {
+  /** Здание «выпрыгивает» на карту (in) или подпрыгивает по готовности (done); base — обычный масштаб значка. */
+  private bounce(sp: Sprite, mode: 'in' | 'done', base = 0.2) {
     this.effects.push({
       obj: sp, t: 0, life: mode === 'in' ? 600 : 700, kind: 'anim', y0: 0, keep: true,
       upd: (p) => {
         if (sp.destroyed) return;
-        sp.scale.set(mode === 'in' ? 0.2 * Math.max(0, backOut(p)) : 0.2 * (1 + 0.45 * Math.sin(p * Math.PI) * (1 - p)));
+        sp.scale.set(mode === 'in' ? base * Math.max(0, backOut(p)) : base * (1 + 0.45 * Math.sin(p * Math.PI) * (1 - p)));
       },
     });
   }
@@ -1007,6 +1098,7 @@ export class MapView {
     const g = this.selG;
     g.clear();
     this.selRing.clear();
+    this.drawComplexes(); // выбранный комплекс — в белой рамке
     if (tile < 0 || isWater(tile)) return;
     const rid = REGION_OF[tile];
     for (const t of REGIONS[rid].tiles) {
@@ -1071,6 +1163,9 @@ export class MapView {
     this.select(-1);
     for (const sp of this.buildSprites.values()) sp.destroy();
     this.buildSprites.clear();
+    for (const sp of this.wingSprites.values()) sp.destroy();
+    this.wingSprites.clear();
+    this.complexG.clear();
     for (const sp of this.battleSprites.values()) sp.destroy();
     this.battleSprites.clear();
     for (const sp of this.wonderSprites.values()) sp.destroy();

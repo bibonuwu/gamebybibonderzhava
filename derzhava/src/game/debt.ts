@@ -5,6 +5,7 @@
 import { addRel, cname, enemiesOf } from './actions';
 import { BUDGET_INFO, BUDGET_LEVELS, IMF_RATE } from './defs';
 import { computeAll, STATS } from './economy';
+import { goldValue } from './exchange';
 import { fmt, fmtDays } from './format';
 import { banner, log, news, rand, sfx } from './state';
 import type { BudgetKey, Country, GameState, TempMod } from './types';
@@ -48,6 +49,8 @@ export function ratingParts(g: GameState, i: number): [string, number][] {
   const dy = debtYears(g, i);
   if (dy > 0.005) parts.push(['Госдолг', -dy * 15]); // год доходов в долг — минус ступень-полторы
   if (c.money < 0) parts.push(['Пустая казна', -15]);
+  const gold = goldValue(g, i) / (revenue(g, i) * 365); // золотой запас в годовых доходах
+  if (gold > 0.01) parts.push(['Золотой запас', Math.min(6, gold * 20)]);
   if (s.moneyRate < 0) parts.push(['Дефицит бюджета', -8]);
   const wars = enemiesOf(g, i).length;
   if (wars) parts.push(['Войны', -5 * wars]);

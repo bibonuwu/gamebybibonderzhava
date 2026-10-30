@@ -6,7 +6,7 @@ import { emit, getGame, sfx, subscribe, toast } from '../game/state';
 
 export type Tab = 'map' | 'policy' | 'build' | 'army' | 'market' | 'stats';
 export type ArmyTab = 'army' | 'diplo' | 'lodge' | 'spy' | 'un';
-export type MarketTab = 'food' | 'arms' | 'res' | 'sci' | 'corp';
+export type MarketTab = 'food' | 'arms' | 'res' | 'trade' | 'sci' | 'corp';
 export type PolicyTab = 'econ' | 'society' | 'people' | 'power' | 'future' | 'science';
 export type Modal =
   | { kind: 'country'; id: number }
@@ -25,6 +25,7 @@ export const ui = {
   modal: null as Modal | null,
   frac: 0,
   marketTab: 'food' as MarketTab,
+  tradeShare: 0.25, // биржа: купить на эту долю казны, продать эту долю запаса
   armyTab: 'army' as ArmyTab, // «Армия», «Дипломатия», «Разведка», «Ложа» и «ООН» — одна вкладка
   spyTarget: -1, // страна, выбранная во вкладке «Разведка»
   policyTab: 'econ' as PolicyTab, // какую подвкладку «Политики» открыть

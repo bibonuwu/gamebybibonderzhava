@@ -12,8 +12,14 @@ import {
 import {
   activeCrises, CRISIS_BY_ID, freeDeposits, hasDeposit, oilDepletion, REGION_LITH, REGION_OIL, RES_INFO, resPriceRatio, topProducers, type Res,
 } from '../../game/resources';
+import { ratingParts } from '../../game/debt';
+import {
+  avgCost, buyCost, COMMODITIES, COMMODITY, ensureExchange, exchangeBuy, exchangeSell, holding, priceHist, priceRatio, profit, PURE,
+  qtyForMoney, sellGain, sellQty, unitPrice, type Commodity,
+} from '../../game/exchange';
 import { emit, getGame } from '../../game/state';
 import type { Genius } from '../../game/types';
+import { embargoed } from '../../game/un';
 import { COUNTRY_DEFS, REGIONS } from '../../game/world';
 import { Bar, Card, Flag, KV, More, Rate, Seg, Tabs } from '../common';
 import { PanelHero } from '../PanelHero';
@@ -32,6 +38,7 @@ export function MarketPanel() {
           { v: 'food', label: '🌾 Еда' },
           { v: 'arms', label: '🔫 Оружие' },
           { v: 'res', label: '⛽ Сырьё' },
+          { v: 'trade', label: '💹 Трейдинг' },
           { v: 'sci', label: '🧑‍🔬 Учёные' },
           { v: 'corp', label: '🏢 Компании' },
         ]}
@@ -39,6 +46,7 @@ export function MarketPanel() {
       {ui.marketTab === 'food' && <FoodTab />}
       {ui.marketTab === 'arms' && <ArmsTab />}
       {ui.marketTab === 'res' && <ResTab />}
+      {ui.marketTab === 'trade' && <TradeTab />}
       {ui.marketTab === 'sci' && <SciTab />}
       {ui.marketTab === 'corp' && <CorpTab />}
     </>
@@ -236,6 +244,96 @@ function ResTab() {
         {free.map((rid) => <div class="row between small" key={rid} style={{ marginBottom: '3px' }}><span>{REGIONS[rid].name}</span><span>{amounts(rid)}</span></div>)}
       </Card>
     </>
+  );
+}
+
+// ---------- трейдинг: биржа ----------
+const TRADE_HINT: Record<Commodity, string> = {
+  oil: 'Цена растёт, когда нефти в мире не хватает, и в нефтяное эмбарго. Купленная нефть лежит в стратегическом резерве: при мировом дефиците заводы берут её оттуда, и производство не падает. Крупная сделка сама сдвигает мировую цену.',
+  gold: 'Золото ничего не производит, но в тревожные времена дорожает: войны, мировые кризисы и финансовая паника гонят инвесторов в «тихую гавань». Золотой запас поднимает кредитный рейтинг — до +6 баллов, займы дешевле.',
+  lith: 'Литий дорожает вместе с роботами и электромобилями, а в «литиевую лихорадку» — особенно. Резерв на складе закрывает мировой дефицит лития.',
+  arms: 'Тот же склад, что на вкладке «Оружие»: проданное оружие уходит из войск. Дорожает, когда в мире войны и гонка вооружений. Агрессору под эмбарго ООН оружие не продают.',
+  food: 'Тот же запас, что на вкладке «Еда»: продадите слишком много — начнётся голод. Дорожает в мировой неурожай и жару.',
+};
+const fmtQty = (q: number) => (q > 0 && q < 10 ? q.toFixed(2).replace(/\.?0+$/, '') : fmt(q));
+
+function TradeTab() {
+  const g = getGame()!;
+  const me = g.player;
+  const c = g.countries[me];
+  const value = PURE.reduce((a, k) => a + sellGain(g, k, holding(c, k)), 0);
+  const open = PURE.reduce((a, k) => a + profit(g, k), 0);
+  const done = g.counters.tradeProfit ?? 0;
+  return (
+    <>
+      <Card title="💹 Биржевой счёт" sub={`💰 ${fmt(c.money)}`}
+        hint="Покупайте дёшево, продавайте дорого. Кнопки покупают на выбранную долю казны и продают ту же долю запаса. Биржа берёт 3% с продажи, а крупная сделка сама двигает цену — сделки туда-обратно в тот же день убыточны.">
+        <KV rows={[
+          ['Нефть, золото и литий на счёте', `💰 ${fmt(value)}`],
+          ...(value > 0 ? [['Если продать всё сейчас', <span class={open >= 0 ? 'up' : 'down'}>{open >= 0 ? '+' : ''}{fmt(open)}</span>] as [string, ComponentChildren]] : []),
+          ...(done ? [['Заработано на закрытых сделках', <span class={done >= 0 ? 'up' : 'down'}>{done >= 0 ? '+' : ''}{fmt(done)}</span>] as [string, ComponentChildren]] : []),
+        ]} />
+        <div class="small muted" style={{ margin: '10px 0 4px' }}>Размер сделки: купить на долю казны · продать долю запаса</div>
+        <Seg value={ui.tradeShare} onChange={(v) => setUI({ tradeShare: v })}
+          options={[0.1, 0.25, 0.5, 1].map((v) => ({ v, label: v === 1 ? 'Всё' : `${v * 100}%` }))} />
+      </Card>
+      {COMMODITIES.map((k) => <TradeCard key={k} k={k} />)}
+    </>
+  );
+}
+
+function TradeCard({ k }: { k: Commodity }) {
+  const g = getGame()!;
+  const me = g.player;
+  const c = g.countries[me];
+  const s = STATS[me];
+  const info = COMMODITY[k];
+  const price = unitPrice(g, k);
+  const hist = priceHist(g, k);
+  const trend = hist.length > 10 ? price / hist[hist.length - 11] - 1 : 0;
+  const have = holding(c, k);
+  const buyQ = qtyForMoney(g, k, Math.max(0, c.money) * ui.tradeShare);
+  const cost = buyCost(g, k, buyQ);
+  const sellQ = sellQty(g, me, k, ui.tradeShare);
+  const gain = sellGain(g, k, sellQ);
+  const embargo = k === 'arms' && embargoed(g, me);
+  const rows: [ComponentChildren, ComponentChildren][] = [['У нас', `${fmtQty(have)} ${info.unit}`]];
+  if (PURE.includes(k) && have > 1e-9) {
+    const pl = profit(g, k);
+    const paid = avgCost(g, k) * have;
+    rows.push(['Средняя цена покупки', `💰 ${fmt(avgCost(g, k) * info.lot)}`]);
+    rows.push(['Прибыль, если продать всё', <span class={pl >= 0 ? 'up' : 'down'}>{pl >= 0 ? '+' : ''}{fmt(pl)}{paid > 0 ? ` (${pl >= 0 ? '+' : ''}${Math.round((pl / paid) * 100)}%)` : ''}</span>]);
+  }
+  if (k === 'oil' || k === 'lith') {
+    const imp = (k === 'oil' ? s.oilNeed - s.oilProd : s.lithNeed - s.lithProd);
+    const draw = k === 'oil' ? s.oilDraw : s.lithDraw;
+    if (draw > 0) rows.push(['Тратим из резерва', <span class="down">−{fmtQty(draw)} в день</span>]);
+    else if (imp > 0 && have > 0) rows.push(['Резерва хватит', `на ${fmtDays(have / imp)} импорта`]);
+  }
+  if (k === 'gold') {
+    const pts = ratingParts(g, me).find((p) => p[0] === 'Золотой запас')?.[1] ?? 0;
+    rows.push(['Страх на рынках', `×${ensureExchange(g).fear.toFixed(2)}`]);
+    if (pts > 0) rows.push(['Кредитный рейтинг', <span class="up">+{pts.toFixed(1)} балла</span>]);
+  }
+  if (k === 'arms') rows.push(['Оснащение армии', <span class={s.equip >= 1 ? 'up' : 'down'}>{pct(s.equip)}</span>]);
+  if (k === 'food') rows.push(['Запаса еды', <span class={s.hunger > 0 ? 'down' : undefined}>на {Math.floor(foodDays(g, me))} дн.</span>]);
+  return (
+    <Card title={`${info.icon} ${info.name}`} sub={`×${priceRatio(g, k).toFixed(2)} к обычной`} hint={TRADE_HINT[k]}>
+      <div class="row between">
+        <span><span class="price-big">💰 {fmt(price * info.lot)}</span> <span class="small muted">за {info.lotName}</span></span>
+        <span class={`num ${trend > 0.005 ? 'up' : trend < -0.005 ? 'down' : 'muted'}`}>
+          {trend > 0 ? '▲' : trend < 0 ? '▼' : '•'} {Math.abs(trend * 100).toFixed(0)}% за 50 дн.
+        </span>
+      </div>
+      <Spark data={hist} color={info.color} />
+      <KV rows={rows} />
+      <div class="grid2" style={{ marginTop: '8px' }}>
+        <TradeButton label={embargo ? 'Эмбарго ООН' : `Купить ${fmtQty(buyQ)}`} cost={cost} disabled={embargo || buyQ <= 0 || cost > c.money}
+          onClick={() => report(exchangeBuy(g, me, k, buyQ), `${info.icon} Куплено ${fmtQty(buyQ)} ${info.unit}`)} />
+        <TradeButton sell label={`Продать ${fmtQty(sellQ)}`} cost={gain} disabled={sellQ <= 0}
+          onClick={() => report(exchangeSell(g, me, k, sellQ), `${info.icon} Продано ${fmtQty(sellQ)} ${info.unit}`)} />
+      </div>
+    </Card>
   );
 }
 

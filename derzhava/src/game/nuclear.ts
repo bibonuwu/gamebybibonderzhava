@@ -4,7 +4,8 @@ import { addRel, alliesOf, atWar, cname, peekPair, setRel } from './actions';
 import { DIFFICULTY } from './defs';
 import { computeAll, regionDefense, STATS } from './economy';
 import { fmt } from './format';
-import { fx, log, mapDirty, news, rand, removeBuilding, sfx } from './state';
+import { convene, fearsSession } from './session';
+import { buildingAt, fx, log, mapDirty, news, rand, ruinTile, sfx } from './state';
 import type { GameState, Missile } from './types';
 import { wonderOwner } from './wonders';
 import { REGIONS, vb } from './world';
@@ -45,6 +46,7 @@ export function interceptChance(g: GameState, ci: number) {
   let p = 0;
   if (g.countries[ci].techs.includes('missile_defense')) p += 0.3;
   if (wonderOwner(g, 'orbital') === ci) p += 0.15;
+  if ((g.countries[ci].megas?.shield ?? 0) >= 3) p += 0.2; // мегапроект «Щит Родины»: противоракетный купол
   return p;
 }
 
@@ -54,6 +56,7 @@ export function nukeBuildError(g: GameState, ci: number, thermo = false): string
   if (!hasBomb(g, ci)) return 'Нужна технология «Атомная бомба»';
   if (thermo && !isThermo(g, ci)) return 'Нужна технология «Термоядерная бомба»';
   if (c.nukeBuild) return c.nukeBuild.thermo ? 'Термоядерная бомба уже собирается' : 'Боеголовка уже собирается';
+  if ((c.nukeFreeze ?? 0) > g.day) return `Мораторий ООН: сборка запрещена ещё ${Math.ceil(c.nukeFreeze! - g.day)} дн.`;
   const cost = nukeCost(g, ci, thermo);
   if (c.money < cost.money) return 'Не хватает денег';
   if (c.brains < cost.brains) return 'Не хватает 🧠';
@@ -109,6 +112,7 @@ function finishNuke(g: GameState, ci: number) {
   } else {
     news(g, `☢️ ${cname(g, ci)} ${vb(ci, 'провёл', 'провела', 'провели')} первое ядерное испытание`, 'war');
   }
+  convene(g, 'nuketest', ci, { note: 'первое ядерное испытание' });
 }
 
 /** Термоядерная бомба готова; первая — взрывается на полигоне, и мир видит гриб высотой 60 км. */
@@ -135,6 +139,7 @@ function finishHBomb(g: GameState, ci: number) {
   } else {
     news(g, `💥 ${cname(g, ci)} ${vb(ci, 'испытал')} термоядерную бомбу`, 'war');
   }
+  convene(g, 'nuketest', ci, { note: 'испытание термоядерной бомбы' });
 }
 
 // ---------- удар ----------
@@ -164,6 +169,7 @@ export function launchNuke(g: GameState, ci: number, rid: number, retaliation = 
   g.missiles.push({ id: g.nextId++, from: ci, region: rid, launch: g.day, arrive: g.day + FLIGHT_DAYS, thermo: hb });
   fx({ kind: 'missile', from: REGIONS[c.capital].center, tile: REGIONS[rid].center });
   condemn(g, ci, victim, retaliation);
+  if (!retaliation) convene(g, 'nukestrike', ci, { victim, note: `ядерный удар по стране ${cname(g, victim)}` });
   const where = REGIONS[rid].name;
   if (ci === g.player) {
     g.counters.nukesLaunched = (g.counters.nukesLaunched ?? 0) + 1;
@@ -235,8 +241,9 @@ function detonate(g: GameState, m: Missile) {
   r.pop = Math.max(1000, r.pop - dead);
   let ruined = 0;
   for (const t of REGIONS[rid].tiles) {
-    if (g.buildings[t] && rand(g) < b.ruin) {
-      removeBuilding(g, t);
+    // каждая клетка комплекса рушится сама по себе
+    if (buildingAt(g, t) >= 0 && rand(g) < b.ruin) {
+      ruinTile(g, t);
       ruined++;
     }
   }
@@ -315,7 +322,10 @@ export function aiNuclear(g: GameState, i: number, th: { enemies: number[]; enem
   if (!c.nukeBuild && arsenalOf(g, i) < want) {
     const thermo = isThermo(g, i);
     const cost = nukeCost(g, i, thermo);
-    if (c.money > cost.money * 1.5 && c.brains > cost.brains * 1.2) startNuke(g, i, thermo);
+    // первое испытание созовёт сессию ООН: пока у врагов нет бомбы, осторожные боты не рискуют санкциями
+    const test = thermo ? !c.hbombTested : !c.nukeTested;
+    const threat = th.enemies.some((e) => arsenalOf(g, e) > 0);
+    if (c.money > cost.money * 1.5 && c.brains > cost.brains * 1.2 && !(test && !threat && fearsSession(g, i, 'nuketest'))) startNuke(g, i, thermo);
   }
   if (!th.enemies.length || !th.underAttack || arsenalOf(g, i) < 1 || g.difficulty === 'easy') return;
   if (c.personality !== 'aggressor' && c.personality !== 'fanatic') return;
@@ -323,6 +333,7 @@ export function aiNuclear(g: GameState, i: number, th: { enemies: number[]; enem
   const enemy = th.enemies.reduce((a, b) => (STATS[b].power > STATS[a].power ? b : a));
   if (arsenalOf(g, enemy) > arsenalOf(g, i)) return; // больший арсенал противника сдерживает
   if (rand(g) > 0.05 * DIFFICULTY[g.difficulty].aggression) return;
+  if (fearsSession(g, i, 'nukestrike', enemy)) return; // санкции и эмбарго всего мира страшнее поражения
   const rid = bestNukeTarget(g, i, enemy);
   if (rid >= 0) launchNuke(g, i, rid);
 }
