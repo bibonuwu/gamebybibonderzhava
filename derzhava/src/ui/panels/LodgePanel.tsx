@@ -17,7 +17,7 @@ import {
 } from '../../game/order';
 import { emit, getGame, toast } from '../../game/state';
 import { P5 } from '../../game/un';
-import { COUNTRY_DEFS } from '../../game/world';
+import { COUNTRY_DEFS, vb } from '../../game/world';
 import { Bar, Card, Flag, More, Rate, RelBar } from '../common';
 import { report, setUI, useStore } from '../store';
 
@@ -533,7 +533,7 @@ function InviteCard() {
     const err = invite(g, k);
     if (err) return report(err);
     if (inOrder(g, k)) toast(`${O.emblem} ${COUNTRY_DEFS[k].name} — наш брат!`, 'good');
-    else toast(`🚪 ${COUNTRY_DEFS[k].name} отказалась от посвящения`, 'bad');
+    else toast(`🚪 ${COUNTRY_DEFS[k].name} ${vb(k, 'отказался')} от посвящения`, 'bad');
     emit();
   };
   const row = (k: number) => {

@@ -10,7 +10,7 @@ import { fmt } from './format';
 import { isMember, JOIN_WISH, LODGE_NAME, type OpChoice } from './lodge';
 import { banner, log, news, pick, rand, sfx } from './state';
 import type { GameState, TempMod } from './types';
-import { COUNTRY_DEFS } from './world';
+import { COUNTRY_DEFS, vb } from './world';
 
 export const ORDER_NAMES = ['Золотой циркуль', 'Северная звезда', 'Белый пеликан', 'Три светоча', 'Великий восток', 'Орден Феникса', 'Храм Соломона', 'Вольные каменщики'];
 export const ORDER_EMBLEMS = ['📐', '🔺', '🌟', '🦅', '🔥', '🕯️', '🗝️', '🐍'];
@@ -154,7 +154,7 @@ function admit(g: GameState, k: number) {
       eye.nextElection = Math.min(eye.nextElection, g.day + 60);
     }
     for (const x of eye.members) if (x !== me && g.countries[x].alive) addRel(g, me, x, -15);
-    log(g, `👁️ ${cname(g, k)} ушла к нам из ложи «${LODGE_NAME}» — её братья в ярости (−15)`, 'info');
+    log(g, `👁️ ${cname(g, k)} ${vb(k, 'ушёл', 'ушла', 'ушли')} к нам из ложи «${LODGE_NAME}» — ${vb(k, 'его', 'её', 'их')} братья в ярости (−15)`, 'info');
   }
   for (const x of orderMembers(g)) addRel(g, k, x, 5);
   O.members.push(k);
@@ -197,8 +197,8 @@ export function onOrderWar(g: GameState, a: number, b: number) {
   dropBrother(g, a);
   for (const k of orderMembers(g)) addRel(g, a, k, -20);
   addRel(g, me, a, -10);
-  if (b === me) log(g, `${O.emblem} ${cname(g, a)} напала на своего мастера — изгнана из ложи «${O.name}»`, 'war', false);
-  else log(g, `${O.emblem} ${cname(g, a)} подняла меч на брата (${cname(g, b)}) и изгнана из ложи «${O.name}»`, 'war');
+  if (b === me) log(g, `${O.emblem} ${cname(g, a)} ${vb(a, 'напал')} на своего мастера — ${vb(a, 'изгнан', 'изгнана', 'изгнаны')} из ложи «${O.name}»`, 'war', false);
+  else log(g, `${O.emblem} ${cname(g, a)} ${vb(a, 'поднял')} меч на брата (${cname(g, b)}) и ${vb(a, 'изгнан', 'изгнана', 'изгнаны')} из ложи «${O.name}»`, 'war');
 }
 
 // ---------- официальная регистрация ----------
@@ -243,7 +243,7 @@ export function tickOrder(g: GameState) {
     for (const k of [...O.members]) {
       if (g.rel[me][k] >= -25 || rand(g) >= 0.35) continue;
       dropBrother(g, k);
-      log(g, `🚪 ${cname(g, k)} вышла из ложи «${O.name}»: отношения с нами испортились`, 'bad');
+      log(g, `🚪 ${cname(g, k)} ${vb(k, 'вышел', 'вышла', 'вышли')} из ложи «${O.name}»: отношения с нами испортились`, 'bad');
     }
   }
   // правители иногда сами просятся в ложу — письмом

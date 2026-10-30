@@ -13,9 +13,12 @@ import { tickNuclear } from './nuclear';
 import { tickOrder } from './order';
 import { tickMail } from './mail';
 import { tickMarket } from './market';
+import { tickMegas } from './megaprojects';
 import { triggerDemand } from './people';
+import { tickProsperity } from './prosperity';
 import { checkQuests } from './quests';
 import { tickRebels } from './rebels';
+import { tickResources } from './resources';
 import { tickSociety } from './society';
 import { tickSpy } from './spy';
 import { allBuildings, banner, fx, log, mapDirty, news, pick, sfx, toast } from './state';
@@ -51,6 +54,9 @@ export function tick(g: GameState) {
   // запасы еды и оружия, рынок, учёные, миллиардеры, компании
   tickMarket(g);
   tickSociety(g);
+  // сырьё, климат, ожидания народа и старение
+  tickResources(g);
+  tickProsperity(g);
 
   g.regions.forEach((r, id) => {
     r.pop = Math.max(1000, r.pop + REGION_DELTA[id]);
@@ -83,6 +89,7 @@ export function tick(g: GameState) {
   tickRebels(g);
 
   tickWonders(g);
+  tickMegas(g);
   tickNuclear(g);
   tickUN(g);
   tickLodge(g);

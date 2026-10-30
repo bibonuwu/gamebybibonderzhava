@@ -85,6 +85,14 @@ export const ACHIEVEMENTS: AchievementDef[] = [
   { id: 'aaa', icon: '🏦', name: 'Рейтинг AAA', desc: 'Добейтесь высшего кредитного рейтинга', check: (g) => rating(g, g.player) === 0 },
   { id: 'top1', icon: '🥇', name: 'Мировой лидер', desc: 'Станьте №1 по военной мощи или экономике', check: (g) =>
     rankOf(g, (i) => STATS[i].power) === 1 || rankOf(g, (i) => STATS[i].moneyRate) === 1 },
+  // поздняя игра
+  { id: 'moon', icon: '🌕', name: 'Один маленький шаг', desc: 'Первыми в мире высадитесь на Луну', check: (g) => g.firsts?.moon === g.player },
+  { id: 'mars', icon: '🔴', name: 'Марсиане', desc: 'Первыми в мире основайте колонию на Марсе', check: (g) => g.firsts?.mars === g.player },
+  { id: 'mega3', icon: '🏗️', name: 'Стройка века', desc: 'Завершите все три этапа любого мегапроекта', check: (g) => Object.values(me(g).megas ?? {}).some((n) => n >= 3) },
+  { id: 'green', icon: '🌱', name: 'Зелёная держава', desc: 'Объявите зелёный курс, когда планета нагреется на 2°C', check: (g) => me(g).green === 2 && (g.climate?.temp ?? 0) >= 2 },
+  { id: 'oilking', icon: '⛽', name: 'Сырьевая держава', desc: 'Пусть продажа нефти и лития даёт четверть налогов', check: (g) => st(g).resMoney > st(g).taxIncome * 0.25 && st(g).taxIncome > 0 },
+  { id: 'donor', icon: '🤲', name: 'Меценат', desc: 'Проведите три программы развития в бедных странах', check: (g) => (g.counters.aid ?? 0) >= 3 },
+  { id: 'calm', icon: '😌', name: 'Народ доволен', desc: 'Проведите три народные программы', check: (g) => (g.counters.programs ?? 0) >= 3 },
 ];
 
 export function checkAchievements(g: GameState) {

@@ -14,6 +14,7 @@ const PAN: Record<string, string> = {
 export function useHotkeys(map: MapView) {
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
+      map.panFast = e.shiftKey;
       const t = e.target as HTMLElement | null;
       if (e.ctrlKey || e.metaKey || e.altKey || t?.tagName === 'INPUT' || t?.tagName === 'TEXTAREA') return;
       const g = getGame();
@@ -78,6 +79,7 @@ export function useHotkeys(map: MapView) {
       emit();
     };
     const up = (e: KeyboardEvent) => {
+      map.panFast = e.shiftKey;
       const dir = PAN[e.code];
       if (dir) map.keyPan(dir, false);
     };

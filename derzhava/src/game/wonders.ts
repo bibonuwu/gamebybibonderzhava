@@ -3,7 +3,7 @@ import type { TechMods } from './defs';
 import { TECH_BY_ID } from './defs';
 import { banner, fx, log, mapDirty, news, sfx } from './state';
 import type { GameState, Personality } from './types';
-import { COUNTRY_DEFS, REGIONS } from './world';
+import { COUNTRY_DEFS, REGIONS, vb } from './world';
 
 export interface WonderDef {
   id: string;
@@ -116,12 +116,12 @@ export function tickWonders(g: GameState) {
       log(g, `🏛️ Чудо света построено: ${w.icon} ${w.name}! ${w.desc}`, 'good', false);
       banner({ icon: w.icon, title: 'Чудо света построено', text: w.name, kind: 'gold' });
     } else {
-      news(g, `🏛️ ${COUNTRY_DEFS[i].name} построила чудо света: ${w.icon} ${w.name}`, 'info');
+      news(g, `🏛️ ${COUNTRY_DEFS[i].name} ${vb(i, 'построил')} чудо света: ${w.icon} ${w.name}`, 'info');
     }
     // остальные проиграли гонку
     g.countries.forEach((o, j) => {
       if (j !== i && o.project?.id === p.id) {
-        cancelWonder(g, j, `😞 ${COUNTRY_DEFS[i].name} первой достроила ${w.icon} ${w.name}. Половина вложений возвращена.`);
+        cancelWonder(g, j, `😞 ${COUNTRY_DEFS[i].name} ${vb(i, 'первым', 'первой', 'первыми')} ${vb(i, 'достроил')} ${w.icon} ${w.name}. Половина вложений возвращена.`);
         if (j === g.player) sfx('defeat');
       }
     });

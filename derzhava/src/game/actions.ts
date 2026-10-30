@@ -9,9 +9,7 @@ import { coalitionBuildBlock, coalitionWarBlock } from './elections';
 import { brothers, onBrotherWar, onLodgeDestroyed } from './lodge';
 import { onOrderDestroyed, onOrderWar, orderBrothers } from './order';
 import { endWar, fearsUN, isAggressor, joinCoalition, liberatedOwner, onConquest, onDestroyed, openCase, sanctions, warJustice } from './un';
-import {
-  COLS, COUNTRY_DEFS, NEIGH, REGIONS, REGION_OF, adjacentWaters, hexDist, isCoastalTile, isWater, terrainOf,
-} from './world';
+import { COLS, COUNTRY_DEFS, NEIGH, REGIONS, REGION_OF, adjacentWaters, hexDist, isCoastalTile, isWater, terrainOf, vb } from './world';
 
 /** Сколько дней боты не трогают игрока в начале партии. */
 export const PLAYER_GRACE = { easy: 900, normal: 540, hard: 300 };
@@ -368,7 +366,7 @@ export function transferRegion(g: GameState, rid: number, to: number, conquest: 
       fc.stability = Math.max(0, fc.stability - 20);
       if (from === g.player) log(g, `🏚️ Столица пала! Новая столица — ${REGIONS[best].name}`, 'bad');
       else if (involvesPlayer(g, to)) log(g, `🏳️ Столица страны ${cname(g, from)} взята!`, 'war');
-      else news(g, `🏳️ ${cname(g, to)} взяла столицу страны ${cname(g, from)} — ${REGIONS[rid].name}`, 'war');
+      else news(g, `🏳️ ${cname(g, to)} ${vb(to, 'взял')} столицу страны ${cname(g, from)} — ${REGIONS[rid].name}`, 'war');
     }
   }
   computeAll(g);
@@ -392,9 +390,9 @@ function destroyCountry(g: GameState, ci: number, by: number) {
     sfx('defeat');
     log(g, '💀 Ваша страна потеряла все земли', 'bad');
   } else if (involvesPlayer(g, by)) {
-    log(g, `💀 ${cname(g, ci)} прекратила существование`, 'war');
+    log(g, `💀 ${cname(g, ci)} ${vb(ci, 'прекратил')} существование`, 'war');
   } else {
-    news(g, `💀 ${cname(g, ci)} прекратила существование — её последние земли взяла ${cname(g, by)}`, 'war');
+    news(g, `💀 ${cname(g, ci)} ${vb(ci, 'прекратил')} существование — ${vb(ci, 'его', 'её', 'их')} последние земли ${vb(by, 'взял')} ${cname(g, by)}`, 'war');
   }
 }
 
@@ -441,7 +439,7 @@ export function declareWar(g: GameState, a: number, b: number, chain = true): st
     log(g, `⚔️ Вы объявили войну: ${cname(g, b)}${justice.just ? ` — ${justice.reason}` : ''}`, 'war', false);
     banner({ icon: '⚔️', title: 'Война объявлена', text: justice.just ? `${cname(g, b)} — ${justice.reason}` : cname(g, b), kind: 'war' });
   }
-  else news(g, `⚔️ ${cname(g, a)} объявила войну стране ${cname(g, b)}`, 'war');
+  else news(g, `⚔️ ${cname(g, a)} ${vb(a, 'объявил')} войну стране ${cname(g, b)}`, 'war');
   if (chain) {
     for (const ally of alliesOf(g, b)) {
       if (ally === a || atWar(g, ally, a)) continue;
@@ -620,7 +618,7 @@ export function retreat(g: GameState, ci: number, id: number): string | null {
   else if (bt.def === g.player) {
     g.counters.defended = (g.counters.defended ?? 0) + 1;
     sfx('victory');
-    log(g, `🛡️ ${cname(g, ci)} отступила от региона ${rname} (потеряла ${fmtK(loss)})`, 'good');
+    log(g, `🛡️ ${cname(g, ci)} ${vb(ci, 'отступил')} от региона ${rname} (${vb(ci, 'потерял')} ${fmtK(loss)})`, 'good');
   }
   computeAll(g);
   return null;
@@ -684,7 +682,7 @@ export function resolveBattle(g: GameState, bt: (typeof g.battles)[number]) {
     } else if (freed && to === g.player) {
       sfx('victory');
       log(g, `🕊️ Коалиция ООН освободила ${rname} и вернула его нам`, 'good', false);
-      banner({ icon: '🕊️', title: 'Земли возвращены', text: `${cname(g, bt.att)} освободила ${rname}`, kind: 'good' });
+      banner({ icon: '🕊️', title: 'Земли возвращены', text: `${cname(g, bt.att)} ${vb(bt.att, 'освободил')} ${rname}`, kind: 'good' });
     } else if (freed) {
       news(g, `🕊️ ${cname(g, bt.att)}: ${freed}`, 'good');
     } else if (bt.def === g.player) {
@@ -795,7 +793,7 @@ export function propose(g: GameState, a: number, b: number, kind: DiploKind): st
   if (sanctions(g, b, a)) return `${cname(g, b)} отказывается: она ввела против вас санкции`;
   if (willAccept(g, a, b, kind)) {
     sign(g, a, b, kind);
-    return `${cname(g, b)} согласна: ${DIPLO_NAME[kind].toLowerCase()}`;
+    return `${cname(g, b)} ${vb(b, 'согласен', 'согласна', 'согласны')}: ${DIPLO_NAME[kind].toLowerCase()}`;
   }
   pair(g, a, b).cooldown = g.day + 30;
   addRel(g, a, b, -2);
@@ -880,7 +878,7 @@ export function proposePeace(g: GameState, a: number, b: number, pay = false): s
     return `${cname(g, b)} принимает мир`;
   }
   if (t === null) return `${cname(g, b)} отказывается от мира`;
-  if (!pay) return `${cname(g, b)} согласна на мир за ${fmtK(t)} 💰`;
+  if (!pay) return `${cname(g, b)} ${vb(b, 'согласен', 'согласна', 'согласны')} на мир за ${fmtK(t)} 💰`;
   if (g.countries[a].money < t) return 'Не хватает денег на выкуп';
   g.countries[a].money -= t;
   g.countries[b].money += t;

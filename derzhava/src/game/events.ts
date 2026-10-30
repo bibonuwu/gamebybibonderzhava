@@ -7,6 +7,7 @@ import { resolveDebtEvent } from './debt';
 import { resolveElectionEvent } from './elections';
 import { resolveLodgeEvent } from './lodge';
 import { resolveDemand } from './people';
+import { resolveDisaster } from './prosperity';
 import { adoptGenius, companiesOf, geniusText } from './society';
 import { allBuildings, log, pick, rand, removeBuilding, sfx } from './state';
 import type { Country, GameState, TempMod } from './types';
@@ -327,6 +328,7 @@ export function resolveEvent(g: GameState, option: number) {
   if (g.event.kind === 'lodge') return resolveLodgeEvent(g, option);
   if (g.event.kind === 'election') return resolveElectionEvent(g, option);
   if (g.event.kind === 'debt') return resolveDebtEvent(g, option);
+  if (g.event.kind === 'climate') return resolveDisaster(g, option);
   const ev = EVENTS.find((e) => e.id === g.event!.id);
   const opt = ev?.options[option];
   const t = g.event.target ?? -1;

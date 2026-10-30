@@ -55,8 +55,21 @@ export interface TechMods {
   defense: number;
   slots: number;
   food: number;
+  // поздняя игра (prosperity.ts, resources.ts)
+  auto: number; // автоматизация: роботы и ИИ вытесняют людей (складывается)
+  emis: number; // выбросы
+  oil: number; // сколько нужно нефти
+  lith: number; // сколько нужно лития
+  aging: number; // бремя пенсий
+  expect: number; // как быстро растут ожидания народа
+  climate: number; // вред от потепления
 }
-export const BASE_MODS: TechMods = { prod: 1, factory: 1, brains: 1, growth: 0, cap: 1, weapons: 1, stab: 0, trade: 1, defense: 1, slots: 0, food: 1 };
+export const BASE_MODS: TechMods = {
+  prod: 1, factory: 1, brains: 1, growth: 0, cap: 1, weapons: 1, stab: 0, trade: 1, defense: 1, slots: 0, food: 1,
+  auto: 0, emis: 1, oil: 1, lith: 1, aging: 1, expect: 1, climate: 1,
+};
+/** Эти бонусы складываются, остальные — перемножаются. */
+export const ADDITIVE_MODS = new Set<keyof TechMods>(['growth', 'stab', 'slots', 'auto']);
 
 export interface TechDef {
   id: string;
@@ -70,36 +83,55 @@ export interface TechDef {
   mods: Partial<TechMods>;
 }
 
-export const TECH_BRANCHES = ['Экономика', 'Наука', 'Медицина', 'Сельское хозяйство', 'Армия', 'Атом', 'Торговля', 'Культура'];
-export const TIER_COST = [0, 180, 480, 1000, 2000];
+export const TECH_BRANCHES = ['Экономика', 'Наука', 'Медицина', 'Сельское хозяйство', 'Экология', 'Армия', 'Атом', 'Торговля', 'Культура'];
+export const TIER_COST = [0, 180, 480, 1000, 2000, 3200];
 
 export const TECHS: TechDef[] = [
   { id: 'smart_factories', name: 'Умные фабрики', icon: '⚙️', branch: 'Экономика', tier: 1, desc: 'Заводы +25%, открывает завод ур. 2', mods: { factory: 1.25 } },
-  { id: 'robotics', name: 'Промышленные роботы', icon: '🤖', branch: 'Экономика', tier: 2, req: 'smart_factories', desc: 'Производительность +10%, заводы +30%, +1 стройка одновременно', mods: { prod: 1.1, factory: 1.3, slots: 1 } },
-  { id: 'nanotech', name: 'Нанотехнологии', icon: '🔬', branch: 'Экономика', tier: 3, req: 'robotics', desc: 'Заводы +50%, открывает завод ур. 3', mods: { factory: 1.5 } },
-  { id: 'fusion', name: 'Термоядерная энергия', icon: '⚛️', branch: 'Экономика', tier: 4, req: 'nanotech', desc: 'Производительность +25%', mods: { prod: 1.25 } },
+  { id: 'robotics', name: 'Промышленные роботы', icon: '🤖', branch: 'Экономика', tier: 2, req: 'smart_factories', desc: 'Производительность +10%, заводы +30%, +1 стройка одновременно · 🤖 автоматизация +1', mods: { prod: 1.1, factory: 1.3, slots: 1, auto: 1 } },
+  { id: 'nanotech', name: 'Нанотехнологии', icon: '🔬', branch: 'Экономика', tier: 3, req: 'robotics', desc: 'Заводы +50%, открывает завод ур. 3 · 🤖 автоматизация +1', mods: { factory: 1.5, auto: 1 } },
+  { id: 'fusion', name: 'Термоядерная энергия', icon: '⚛️', branch: 'Экономика', tier: 4, req: 'nanotech', desc: 'Производительность +25%, нефти нужно на 20% меньше', mods: { prod: 1.25, oil: 0.8 } },
+  { id: 'molecular', name: 'Молекулярная сборка', icon: '🧩', branch: 'Экономика', tier: 5, req: 'fusion', desc: 'Заводы +40%, производительность +10% · 🤖 автоматизация +1', fact: 'Фейнман в 1959 году: «Внизу полным-полно места». Собрать вещь атом за атомом — мечта нанотехнологий.', mods: { factory: 1.4, prod: 1.1, auto: 1 } },
   { id: 'digital_edu', name: 'Цифровое образование', icon: '💻', branch: 'Наука', tier: 1, desc: '🧠 +20%, открывает университет ур. 2', mods: { brains: 1.2 } },
   { id: 'supercomputers', name: 'Суперкомпьютеры', icon: '🖥️', branch: 'Наука', tier: 2, req: 'digital_edu', desc: '🧠 +25%', mods: { brains: 1.25 } },
-  { id: 'ai', name: 'Искусственный интеллект', icon: '🧬', branch: 'Наука', tier: 3, req: 'supercomputers', desc: '🧠 +30%, производительность +10%, университет ур. 3', mods: { brains: 1.3, prod: 1.1 } },
+  { id: 'ai', name: 'Искусственный интеллект', icon: '🧬', branch: 'Наука', tier: 3, req: 'supercomputers', desc: '🧠 +30%, производительность +10%, университет ур. 3 · 🤖 автоматизация +1', mods: { brains: 1.3, prod: 1.1, auto: 1 } },
   { id: 'quantum', name: 'Квантовые компьютеры', icon: '🌀', branch: 'Наука', tier: 4, req: 'ai', desc: '🧠 +40%', mods: { brains: 1.4 } },
   { id: 'space', name: 'Освоение космоса', icon: '🚀', branch: 'Наука', tier: 4, req: 'ai', desc: '🧠 +15%, производительность +10%, стабильность +3', mods: { brains: 1.15, prod: 1.1, stab: 3 } },
+  { id: 'strong_ai', name: 'Сильный ИИ', icon: '💠', branch: 'Наука', tier: 5, req: 'quantum', desc: '🧠 +35%, производительность +10% · 🤖 автоматизация +2', fact: 'Тьюринг в 1950 году предложил тест: если в переписке не отличить машину от человека — машина мыслит.', mods: { brains: 1.35, prod: 1.1, auto: 2 } },
   { id: 'telemed', name: 'Телемедицина', icon: '📡', branch: 'Медицина', tier: 1, desc: 'Рост населения +0.2%/год, больница ур. 2', mods: { growth: 0.2 } },
   { id: 'gene_therapy', name: 'Генная терапия', icon: '🧪', branch: 'Медицина', tier: 2, req: 'telemed', desc: 'Рост +0.3%/год, больница ур. 3', mods: { growth: 0.3 } },
-  { id: 'longevity', name: 'Продление жизни', icon: '💊', branch: 'Медицина', tier: 3, req: 'gene_therapy', desc: 'Рост +0.4%/год, стабильность +3', mods: { growth: 0.4, stab: 3 } },
+  { id: 'longevity', name: 'Продление жизни', icon: '💊', branch: 'Медицина', tier: 3, req: 'gene_therapy', desc: 'Рост +0.4%/год, стабильность +3 (но пожилых станет больше)', mods: { growth: 0.4, stab: 3 } },
+  { id: 'rejuvenation', name: 'Омоложение', icon: '⏳', branch: 'Медицина', tier: 4, req: 'longevity', desc: 'Пожилые остаются здоровыми и работают: пенсии −35%, рост +0.2%/год', mods: { aging: 0.65, growth: 0.2 } },
+  { id: 'neuro', name: 'Нейроинтерфейсы', icon: '🎧', branch: 'Медицина', tier: 5, req: 'rejuvenation', desc: '🧠 +15%, стабильность +3, ожидания народа растут на 15% медленнее', mods: { brains: 1.15, stab: 3, expect: 0.85 } },
   { id: 'vertical_farms', name: 'Вертикальные фермы', icon: '🏢', branch: 'Сельское хозяйство', tier: 1, desc: 'Лимит населения +10%, урожай +10%, ферма ур. 2', mods: { cap: 1.1, food: 1.1 } },
   { id: 'gmo', name: 'ГМО-культуры', icon: '🌽', branch: 'Сельское хозяйство', tier: 2, req: 'vertical_farms', desc: 'Лимит населения +15%, урожай +15%, ферма ур. 3', mods: { cap: 1.15, food: 1.15 } },
+  { id: 'lab_meat', name: 'Мясо из пробирки', icon: '🥩', branch: 'Сельское хозяйство', tier: 3, req: 'gmo', desc: 'Урожай +20%, лимит населения +5%, выбросы −5%', mods: { food: 1.2, cap: 1.05, emis: 0.95 } },
+  { id: 'drought_crops', name: 'Засухоустойчивые культуры', icon: '🌵', branch: 'Сельское хозяйство', tier: 4, req: 'lab_meat', desc: 'Урожай +10%, вред от потепления вдвое меньше', mods: { food: 1.1, climate: 0.5 } },
+  { id: 'green_energy', name: 'Зелёная энергетика', icon: '☀️', branch: 'Экология', tier: 1, desc: 'Выбросы −20%, нефти нужно на 15% меньше, но лития для батарей — на 25% больше', mods: { emis: 0.8, oil: 0.85, lith: 1.25 } },
+  { id: 'smart_grid', name: 'Умные сети', icon: '🔌', branch: 'Экология', tier: 2, req: 'green_energy', desc: 'Производительность +5%, выбросы −10%, лития нужно на 15% больше', mods: { prod: 1.05, emis: 0.9, lith: 1.15 } },
+  { id: 'carbon_capture', name: 'Улавливание углерода', icon: '🌫️', branch: 'Экология', tier: 3, req: 'smart_grid', desc: 'Выбросы −25%', mods: { emis: 0.75 } },
+  { id: 'battery_recycling', name: 'Переработка батарей', icon: '♻️', branch: 'Экология', tier: 3, req: 'smart_grid', desc: 'Лития нужно на 35% меньше', mods: { lith: 0.65 } },
+  { id: 'geoengineering', name: 'Геоинженерия', icon: '🌦️', branch: 'Экология', tier: 5, req: 'carbon_capture', desc: 'Охлаждаем планету: потепление −0.05°C в год, вред от климата −30%', fact: 'В 1991 году вулкан Пинатубо выбросил 15 млн т серы — и Земля на год остыла на полградуса.', mods: { climate: 0.7 } },
   { id: 'drones', name: 'Беспилотники', icon: '🛸', branch: 'Армия', tier: 1, desc: 'Вооружение +20%, казарма ур. 2', mods: { weapons: 1.2 } },
   { id: 'hypersonic', name: 'Гиперзвуковые ракеты', icon: '🚀', branch: 'Армия', tier: 2, req: 'drones', desc: 'Вооружение +25%, крепость ур. 2', mods: { weapons: 1.25 } },
   { id: 'combat_robots', name: 'Боевые роботы', icon: '🦾', branch: 'Армия', tier: 3, req: 'hypersonic', desc: 'Вооружение +35%, казарма ур. 3', mods: { weapons: 1.35 } },
   { id: 'missile_defense', name: 'Противоракетная оборона', icon: '🛰️', branch: 'Армия', tier: 3, req: 'hypersonic', desc: 'Оборона +30%, крепость ур. 3', mods: { defense: 1.3 } },
+  { id: 'cyber_army', name: 'Кибервойска', icon: '👾', branch: 'Армия', tier: 4, req: 'combat_robots', desc: 'Вооружение +20%, оборона +10%, мировые кибератаки нам не страшны', mods: { weapons: 1.2, defense: 1.1 } },
+  { id: 'orbital_defense', name: 'Орбитальная оборона', icon: '🌌', branch: 'Армия', tier: 5, req: 'cyber_army', desc: 'Оборона +30%, вооружение +15%', mods: { defense: 1.3, weapons: 1.15 } },
   { id: 'nuclear_physics', name: 'Ядерная физика', icon: '⚛️', branch: 'Атом', tier: 1, desc: '🧠 +10%, открывает атомную ветку', fact: '1938: Ган и Штрассман расщепили ядро урана нейтроном. Одно деление даёт 200 МэВ — в миллионы раз больше, чем химическая реакция.', mods: { brains: 1.1 } },
-  { id: 'nuclear_power', name: 'Атомная энергетика', icon: '⚡', branch: 'Атом', tier: 2, req: 'nuclear_physics', desc: 'Производительность +10%: АЭС дают дешёвую энергию', fact: '1954: в Обнинске заработала первая в мире АЭС. Килограмм урана-235 заменяет около 2 500 т угля.', mods: { prod: 1.1 } },
+  { id: 'nuclear_power', name: 'Атомная энергетика', icon: '⚡', branch: 'Атом', tier: 2, req: 'nuclear_physics', desc: 'Производительность +10%: АЭС дают дешёвую энергию, выбросы −5%', fact: '1954: в Обнинске заработала первая в мире АЭС. Килограмм урана-235 заменяет около 2 500 т угля.', mods: { prod: 1.1, emis: 0.95 } },
+  { id: 'thorium', name: 'Ториевые реакторы', icon: '♨️', branch: 'Атом', tier: 3, req: 'nuclear_power', desc: 'Производительность +8%, нефти нужно на 15% меньше, выбросы −10%', fact: 'Тория в земной коре втрое больше, чем урана, а бомбу из ториевого реактора не сделать.', mods: { prod: 1.08, oil: 0.85, emis: 0.9 } },
+  { id: 'nuclear_rockets', name: 'Ядерные ракетные двигатели', icon: '🌠', branch: 'Атом', tier: 4, req: 'thorium', desc: '🧠 +5%, открывает полёт на Марс (мегапроект «Космическая программа»)', fact: 'В 1960-х в США испытывали ядерный двигатель NERVA: он вдвое экономичнее химического.', mods: { brains: 1.05 } },
   { id: 'nuclear_bomb', name: 'Атомная бомба', icon: '☢️', branch: 'Атом', tier: 3, req: 'nuclear_power', desc: 'Сборка ядерных боеголовок (вкладка «Армия»). Боты боятся нападать на ядерную державу', fact: '1945: в «Малыше» было 64 кг урана, но разделилось меньше килограмма. Мощность — 15 кт тротила.', mods: {} },
   { id: 'thermonuclear', name: 'Термоядерная бомба', icon: '💥', branch: 'Атом', tier: 4, req: 'nuclear_bomb', desc: 'Сборка термоядерных бомб (вкладка «Армия»): гибнет 30% региона, радиация задевает соседние', fact: '1961: «Царь-бомба» мощностью 50 Мт — в 3 000 с лишним раз сильнее хиросимской. Гриб поднялся на 60 км.', mods: {} },
   { id: 'auto_ports', name: 'Автоматизированные порты', icon: '🏗️', branch: 'Торговля', tier: 1, desc: 'Торговля +20%, порт ур. 2', mods: { trade: 1.2 } },
   { id: 'global_logistics', name: 'Глобальная логистика', icon: '🌐', branch: 'Торговля', tier: 2, req: 'auto_ports', desc: 'Торговля +30%, производительность +5%, порт ур. 3', mods: { trade: 1.3, prod: 1.05 } },
+  { id: 'digital_money', name: 'Цифровые деньги', icon: '🪙', branch: 'Торговля', tier: 3, req: 'global_logistics', desc: 'Торговля +25%, производительность +4%', mods: { trade: 1.25, prod: 1.04 } },
+  { id: 'hyperloop', name: 'Вакуумные поезда', icon: '🚝', branch: 'Торговля', tier: 4, req: 'digital_money', desc: 'Торговля +20%, производительность +8%, нефти нужно на 10% меньше', mods: { trade: 1.2, prod: 1.08, oil: 0.9 } },
   { id: 'dialogue', name: 'Межрелигиозный диалог', icon: '🕊️', branch: 'Культура', tier: 1, desc: 'Стабильность +3, храм ур. 2', mods: { stab: 3 } },
   { id: 'revival', name: 'Духовное возрождение', icon: '✨', branch: 'Культура', tier: 2, req: 'dialogue', desc: 'Стабильность +4, храм ур. 3', mods: { stab: 4 } },
+  { id: 'soft_power', name: 'Мягкая сила', icon: '🎭', branch: 'Культура', tier: 3, req: 'revival', desc: 'Стабильность +3, ожидания народа растут на 15% медленнее', mods: { stab: 3, expect: 0.85 } },
+  { id: 'world_culture', name: 'Мировая культура', icon: '🎼', branch: 'Культура', tier: 4, req: 'soft_power', desc: 'Стабильность +4, ожидания народа растут на 20% медленнее', mods: { stab: 4, expect: 0.8 } },
 ];
 export const TECH_BY_ID = Object.fromEntries(TECHS.map((t) => [t.id, t])) as Record<string, TechDef>;
 
@@ -269,3 +301,20 @@ export const SG_STAB = 3; // стабильность, пока наш прав�
 export const START_YEAR = 2026;
 export const WAR_GRACE_DAYS = 365;
 export const BATTLE_DAYS = 20;
+
+// ---------- цена процветания (prosperity.ts) ----------
+/** Зелёный курс: доля налогов на переход, насколько он режет выбросы и нефть, как к нему относятся избиратели. */
+export const GREEN_LEVELS = [
+  { name: 'Нет', icon: '🏭', cost: 0, cut: 0, oil: 0 },
+  { name: 'Умеренный', icon: '🌿', cost: 0.03, cut: 0.3, oil: 0.15 },
+  { name: 'Зелёный курс', icon: '🌱', cost: 0.07, cut: 0.6, oil: 0.3 },
+];
+/** Защита от безработицы, которую приносят роботы и ИИ: доля налогов и сколько удара она снимает. */
+export const SAFETY_LEVELS = [
+  { name: 'Нет', cost: 0, cover: 0, stab: 0 },
+  { name: 'Переобучение', cost: 0.03, cover: 0.55, stab: 0 },
+  { name: 'Базовый доход', cost: 0.08, cover: 1, stab: 2 },
+];
+export const EXPECT_MAX = 25; // предел ожиданий народа (столько стабильности они могут отнять)
+export const AUTO_STAB = 1.6; // стабильность за каждый уровень автоматизации без защиты
+export const PENSION_AGE = 0.14; // доля пожилых, сверх которой пенсии ложатся на бюджет

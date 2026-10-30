@@ -92,6 +92,13 @@ const MAP = {
   '🥧': ['pie-slice', 'brown'], '🍲': ['cooking-pot', 'orange'], '🍯': ['honey-jar', 'gold'], '🍎': ['shiny-apple', 'red'],
   '❤': ['hearts', 'red'], '💛': ['hearts', 'yellow'], '💗': ['hearts', 'pink'], '💞': ['nested-hearts', 'pink'],
   '💌': ['love-letter', 'pink'],
+  // поздняя игра: сырьё, климат, вызовы, мегапроекты
+  '⛽': ['oil-drum', 'brown'], '🔋': ['battery-pack', 'green'], '🌡': ['thermometer-hot', 'red'], '👴': ['beard', 'ivory'],
+  '🚄': ['subway-train', 'blue'], '🚝': ['subway-train', 'cyan'], '♻': ['recycle', 'green'], '🌱': ['sprout', 'green'],
+  '🤲': ['receive-money', 'gold'], '🌕': ['moon', 'ivory'], '🔴': ['ringed-planet', 'red'], '🏘': ['family-house', 'orange'],
+  '🧩': ['puzzle', 'purple'], '💠': ['cyborg-face', 'cyan'], '🎧': ['headphones', 'purple'], '🥩': ['steak', 'red'],
+  '🌵': ['cactus', 'green'], '🔌': ['plug', 'steel'], '🌦': ['sun-cloud', 'cyan'], '👾': ['alien-stare', 'green'],
+  '🌌': ['galaxy', 'purple'], '🌠': ['comet-spark', 'orange'], '🎭': ['carnival-mask', 'purple'], '🎼': ['musical-score', 'purple'],
   // звери
   '🐾': ['paw-print', 'brown'], '🐈': ['cat', 'orange'], '🐕': ['sitting-dog', 'brown'], '🦴': ['crossed-bones', 'ivory'],
   '🐼': ['panda', 'ivory'], '🐘': ['elephant', 'steel'], '🐧': ['penguin', 'blue'], '🐻‍❄': ['polar-bear', 'ivory'],

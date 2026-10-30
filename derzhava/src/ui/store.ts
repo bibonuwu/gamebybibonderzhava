@@ -6,8 +6,8 @@ import { emit, getGame, sfx, subscribe, toast } from '../game/state';
 
 export type Tab = 'map' | 'policy' | 'build' | 'army' | 'market' | 'stats';
 export type ArmyTab = 'army' | 'diplo' | 'lodge' | 'spy' | 'un';
-export type MarketTab = 'food' | 'arms' | 'sci' | 'corp';
-export type PolicyTab = 'econ' | 'society' | 'people' | 'power' | 'science';
+export type MarketTab = 'food' | 'arms' | 'res' | 'sci' | 'corp';
+export type PolicyTab = 'econ' | 'society' | 'people' | 'power' | 'future' | 'science';
 export type Modal =
   | { kind: 'country'; id: number }
   | { kind: 'attack'; rid: number }

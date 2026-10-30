@@ -5,8 +5,26 @@ import { answerLetter, claimLetter, giftParts, readLetter, unreadMail } from '..
 import { emit, getGame, sfx, toast } from '../game/state';
 import type { GameState, Letter } from '../game/types';
 import { Effects } from './common';
-import { LetterArt } from './mailArt';
 import { prefs, report, setUI, ui, useStore } from './store';
+
+// Картинки писем — отдельным файлом: игре они не нужны при запуске. Подгружаем их, когда игра простаивает
+// (так они попадут и в офлайн-кэш), а если письмо открыли раньше — сразу.
+type ArtFn = typeof import('./mailArt').LetterArt;
+let Art: ArtFn | null = null;
+let artLoading: Promise<void> | null = null;
+const loadArt = () => (artLoading ??= import('./mailArt').then((m) => { Art = m.LetterArt; }));
+if (typeof window !== 'undefined') {
+  const idle = (window as Window & { requestIdleCallback?: (f: () => void) => void }).requestIdleCallback;
+  if (idle) idle(() => void loadArt());
+  else setTimeout(() => void loadArt(), 3000);
+}
+function LetterArt(props: { kind: string; hint?: string }) {
+  const [, ready] = useState(0);
+  useEffect(() => {
+    if (!Art) loadArt().then(() => ready(1));
+  }, []);
+  return Art ? <Art {...props} /> : <svg class="art" viewBox="0 0 320 150" aria-hidden="true" />;
+}
 
 const open = (id?: number) => setUI({ modal: { kind: 'mail', id } });
 

@@ -12,6 +12,7 @@
     "preview": "vite preview",
     "map": "node scripts/build-map.mjs",
     "sim": "tsx scripts/sim-test.ts",
+    "test": "node scripts/run-tests.mjs",
     "app": "npm run build && electron .",
     "exe": "npm run build && electron-builder --win",
     "icon": "electron scripts/make-icon.cjs",

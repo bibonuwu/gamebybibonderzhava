@@ -2,13 +2,18 @@ import type { ComponentChildren } from 'preact';
 import { useState } from 'preact/hooks';
 import { availableTechs, fundamentalCost, research, researchFundamental, techCost } from '../../game/actions';
 import {
-  BIRTH_POLICY, BUDGET_COST, BUDGET_INFO, BUDGET_LEVELS, GOVS, MIGRATION, RELIGIONS, TECHS, TECH_BRANCHES,
+  BIRTH_POLICY, BUDGET_COST, BUDGET_INFO, BUDGET_LEVELS, EXPECT_MAX, GOVS, GREEN_LEVELS, MIGRATION, PENSION_AGE, RELIGIONS, SAFETY_LEVELS, TECHS,
+  TECH_BRANCHES,
 } from '../../game/defs';
 import { IMF_BUDGET, IMF_TAX, pct } from '../../game/debt';
 import { computeAll, STATS } from '../../game/economy';
 import { coalitionBounds, coalitionParty, PARTY_BY_ID } from '../../game/elections';
 import { fmt, fmtDate, fmtDays } from '../../game/format';
 import { moodOf } from '../../game/people';
+import {
+  agingTarget, autoPenalty, cdLeft, climateFear, climateFoodLoss, elderly, pensionReform, programCost, programError, PROGRAMS, reformError,
+  setGreen, setSafety, startProgram, warmingRate,
+} from '../../game/prosperity';
 import { inviteInvestors, investorsCost, investorsError, richTax, richTaxError, richTaxGain } from '../../game/society';
 import { emit, getGame, log } from '../../game/state';
 import type { BudgetKey, GovType, ReligionPolicy } from '../../game/types';
@@ -39,10 +44,12 @@ export function PolicyPanel() {
           { v: 'people', label: '📢 Народ' },
           { v: 'society', label: '👥 Общество' },
           { v: 'power', label: '👑 Власть' },
+          { v: 'future', label: '🌡️ Вызовы' },
           { v: 'science', label: '🔬 Наука' },
         ]}
       />
       {sub === 'econ' && <Economy />}
+      {sub === 'future' && <Future />}
       {sub === 'society' && <Society />}
       {sub === 'people' && <People />}
       {sub === 'power' && <Power />}
@@ -75,6 +82,10 @@ export function IncomeTable() {
     ['👁️ Десятина ложи', s.lodgeTithe],
     ['🏦 Проценты по долгу', -s.debtInterest],
     ['🕵️ Контрразведка', -s.intelCost],
+    ['⛽ Нефть и литий', s.resMoney],
+    ['👴 Пенсии', -s.pensionCost],
+    ['🤖 Защита от безработицы', -s.safetyCost],
+    ['🌱 Зелёный курс', -s.greenCost],
   ];
   return (
     <KV
@@ -83,6 +94,9 @@ export function IncomeTable() {
         [<b>Итого</b>, <Rate v={s.moneyRate} />],
         ...(s.sanctions > 0
           ? [[`🚫 Санкции ООН (−${Math.round(s.sanctions * 100)}% производства)`, <span class="down">−{fmt(s.sanctionLoss)}/сек</span>] as [string, ComponentChildren]]
+          : []),
+        ...(s.resShort > 0.005
+          ? [['⛽ Нехватка сырья в мире', <span class="down">−{Math.round(s.resShort * 100)}% производства</span>] as [string, ComponentChildren]]
           : []),
       ]}
     />
@@ -305,7 +319,98 @@ function Power() {
   );
 }
 
-const MOD_ICON = { stab: '⚖️', growth: '👥', prod: '💰', brains: '🧠', food: '🌾', rich: '💎', sci: '🧑‍🔬' };
+/** Вызовы поздней игры: богатство и спокойствие не бесплатны. */
+function Future() {
+  const g = getGame()!;
+  const me = g.player;
+  const c = g.countries[me];
+  const s = STATS[me];
+  const expect = c.expect ?? 0;
+  const old = elderly(c, s.mods.aging);
+  const safety = SAFETY_LEVELS[c.safety ?? 0];
+  const jobless = autoPenalty(s.mods.auto, c.budget.edu);
+  const green = GREEN_LEVELS[c.green ?? 0];
+  const T = g.climate;
+  const rate = warmingRate(g);
+  const fear = climateFear(g, me);
+  const reformErr = reformError(g, me);
+  return (
+    <>
+      <Card title="😤 Ожидания народа" sub={expect >= 0.5 ? `⚖️ −${expect.toFixed(1)}` : 'спокойны'}
+        hint="Привыкнув к хорошей жизни, люди хотят большего: пока стабильность выше 55%, ожидания растут и понемногу отнимают её. Сбить их помогают народные программы, технологии культуры и мегапроект «Умные города». В трудные времена люди становятся скромнее.">
+        <Bar value={expect / EXPECT_MAX} color={expect > 15 ? 'red' : undefined} />
+        <div class="small muted" style={{ margin: '4px 0 8px' }}>
+          {expect < 0.5 ? 'Люди пока ничего особенного не ждут.' : `Стабильность −${expect.toFixed(1)} (предел −${EXPECT_MAX}).`}
+          {s.mods.expect < 0.99 && ` Растут на ${pct(1 - s.mods.expect)} медленнее.`}
+        </div>
+        {PROGRAMS.map((p) => {
+          const err = programError(g, me, p.id);
+          const wait = cdLeft(g, me, p.id);
+          return (
+            <div class="list-item" key={p.id}>
+              <span class="big-ic">{p.icon}</span>
+              <div class="grow"><b>{p.name}</b><div class="small muted">{p.desc}</div></div>
+              <button class="btn sm" disabled={!!err} title={err ?? undefined} onClick={() => report(startProgram(g, me, p.id))}>
+                {wait ? `⏳ ${wait} дн.` : `💰 ${fmt(programCost(g, me, p))}`}
+              </button>
+            </div>
+          );
+        })}
+      </Card>
+      <Card title="👴 Старение" sub={`${pct(c.aging ?? 0)} пожилых`}
+        hint={`Чем лучше медицина и дольше жизнь, тем больше пенсионеров. Пенсии за всех сверх ${pct(PENSION_AGE)} пожилых ложатся на бюджет, и рабочих рук становится меньше. Помогают поддержка рождаемости, миграция, технология «Омоложение», мегапроект «Нация долгожителей» и пенсионная реформа.`}>
+        <KV rows={[
+          ['Пожилых', `${pct(c.aging ?? 0)} → ${pct(agingTarget(g, me))}`],
+          ['👴 Пенсии сверх обычного', <Rate v={-s.pensionCost} />],
+          ['Рабочих рук меньше', old > 0 ? <span class="down">−{(30 * old).toFixed(1)}% производства</span> : 'нет'],
+          ...(c.pensionReform ? [['Пенсионный возраст поднят', `${c.pensionReform} раз из 2`] as [string, ComponentChildren]] : []),
+        ]} />
+        <button class="btn ghost block" style={{ marginTop: '8px' }} disabled={!!reformErr} title={reformErr ?? undefined}
+          onClick={() => setUI({ modal: { kind: 'confirm', danger: true, title: '👴 Поднять пенсионный возраст?', okText: 'Поднять',
+            text: 'Пенсии станут на 15% дешевле навсегда, но народ возмутится: стабильность −10 на 300 дней (при диктатуре и монархии −6), ожидания +3, доверие к власти упадёт.',
+            ok: () => report(pensionReform(g, me)) } })}>
+          👴 Пенсионная реформа{reformErr ? ` · ${reformErr}` : ''}
+        </button>
+      </Card>
+      <Card title="🤖 Роботы и работа" sub={s.mods.auto ? `автоматизация ${s.mods.auto}` : 'роботов мало'}
+        hint="Промышленные роботы, нанотехнологии и ИИ (технологии с меткой 🤖) поднимают производство, но отнимают у людей работу. Высокий бюджет образования немного смягчает удар. Переобучение снимает половину недовольства, базовый доход — всё и ещё радует людей.">
+        <div class="row between small" style={{ marginBottom: '6px' }}>
+          <span>Недовольство безработицей</span>
+          <b class={jobless * (1 - safety.cover) > 0.05 ? 'down' : 'up'}>⚖️ −{(jobless * (1 - safety.cover)).toFixed(1)}</b>
+        </div>
+        <Seg value={c.safety ?? 0} onChange={(v) => { setSafety(g, me, v); emit(); }} options={SAFETY_LEVELS.map((l, i) => ({ v: i, label: l.name }))} />
+        <div class="small muted" style={{ marginTop: '4px' }}>
+          {safety.cost ? `Стоит ${pct(safety.cost)} налогов (−${fmt(s.safetyCost)}/сек), снимает ${pct(safety.cover)} недовольства${safety.stab ? `, стабильность +${safety.stab}` : ''}.` : 'Без защиты: люди сами ищут, где заработать.'}
+        </div>
+      </Card>
+      {T && (
+        <Card title="🌍 Климат планеты" sub={`+${T.temp.toFixed(2)}°C`}
+          hint="Выбросы всех стран греют планету. Выше +1.5°C падает урожай (жарким странам сильнее, северным слабее), всё чаще ураганы, засухи, наводнения и пожары, а выше +2°C море наступает на побережья. Избиратели требуют зелёного курса. Выбросы режут технологии ветки «Экология», мегапроект «Энергопереход» и климатическое соглашение ООН.">
+          <div class="row between">
+            <span class="price-big">🌡️ +{T.temp.toFixed(2)}°C</span>
+            <span class={rate > 0 ? 'down' : 'up'}>{rate >= 0 ? '+' : ''}{rate.toFixed(3)}°C в год</span>
+          </div>
+          <div style={{ margin: '6px 0' }}><Bar value={(T.temp - 1) / 2.5} color={T.temp >= 2 ? 'red' : undefined} /></div>
+          <KV rows={[
+            ['Наша доля мировых выбросов', pct(s.emis / Math.max(1e-9, T.emis))],
+            ['Урожай из-за жары', climateFoodLoss(g, me, s.mods.climate) > 0.001 ? <span class="down">−{pct(climateFoodLoss(g, me, s.mods.climate))}</span> : 'не страдает'],
+            ['Тревога за климат', fear >= 0.05 ? <span class="down">⚖️ −{fear.toFixed(1)}</span> : 'нет'],
+            ...(s.mods.climate < 0.99 ? [['Защита от стихии', `вред −${pct(1 - s.mods.climate)}`] as [string, ComponentChildren]] : []),
+          ]} />
+          <div class="small" style={{ margin: '10px 0 4px' }}><b>🌱 Зелёный курс</b></div>
+          <Seg value={c.green ?? 0} onChange={(v) => { setGreen(g, me, v); emit(); }} options={GREEN_LEVELS.map((l, i) => ({ v: i, label: l.name }))} />
+          <div class="small muted" style={{ marginTop: '4px' }}>
+            {green.cost
+              ? `Стоит ${pct(green.cost)} налогов (−${fmt(s.greenCost)}/сек): выбросы −${pct(green.cut)}, нефти нужно на ${pct(green.oil)} меньше, тревога за климат −${pct(0.45 * (c.green ?? 0))}. Но для батарей нужно больше лития.`
+              : 'Без зелёного курса. Выбросы режут и технологии ветки «Экология».'}
+          </div>
+        </Card>
+      )}
+    </>
+  );
+}
+
+const MOD_ICON = { stab: '⚖️', growth: '👥', prod: '💰', brains: '🧠', food: '🌾', rich: '💎', sci: '🧑‍🔬', emis: '🏭' };
 
 function Science() {
   const g = getGame()!;

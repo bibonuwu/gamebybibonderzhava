@@ -15,11 +15,13 @@ import {
 import { RATINGS, rating } from '../../game/debt';
 import { pending } from '../../game/assembly';
 import { brothers, visibleMembers } from '../../game/lodge';
+import { aidCost as devAidCost, aidDonors, aidError, AID_MEMORY, AID_NOT_POOR, aidLoyal, startAid } from '../../game/megaprojects';
 import { inOrder, invite, inviteCost, inviteError, joinChance } from '../../game/order';
 import { nearCollapse, rebelsIn } from '../../game/rebels';
+import { hasDeposit, oilDepletion, REGION_LITH, REGION_OIL } from '../../game/resources';
 import { dossier, netOf, watched } from '../../game/spy';
 import { WONDER_BY_ID, wondersOf } from '../../game/wonders';
-import { COUNTRY_DEFS, REGIONS } from '../../game/world';
+import { COUNTRY_DEFS, REGIONS, vb } from '../../game/world';
 import { Bar, Card, Flag, KV, LiveNum, More, Rate, RelBar, relText } from '../common';
 import { PeaceButton } from './ArmyPanel';
 import { report, setUI, useStore } from '../store';
@@ -33,7 +35,7 @@ export function DiploPanel({ map }: { map: MapView }) {
   const masons = new Set(visibleMembers(g));
   const neutral = reachableTargets(g, me, true)
     .map((t) => ({ ...t, cost: annexCost(g, me, t.rid) }))
-    .sort((a, b) => a.cost - b.cost);
+    .sort((a, b) => Number(hasDeposit(b.rid)) - Number(hasDeposit(a.rid)) || a.cost - b.cost);
   return (
     <>
       {g.proposals.length > 0 && (
@@ -81,7 +83,11 @@ export function DiploPanel({ map }: { map: MapView }) {
             <span class="big-ic">{t.via === 'sea' ? '⛵' : '🏕️'}</span>
             <div class="grow tap" onClick={() => { setUI({ tab: 'map', tile: REGIONS[t.rid].center }); map.select(REGIONS[t.rid].center); map.focusTile(REGIONS[t.rid].center, 1.6); }}>
               <div><b>{REGIONS[t.rid].name}</b></div>
-              <div class="small muted">👥 {fmt(g.regions[t.rid].pop)}</div>
+              <div class="small muted">
+                👥 {fmt(g.regions[t.rid].pop)}
+                {REGION_OIL[t.rid] > 0.05 && ` · ⛽ нефть ${(REGION_OIL[t.rid] * oilDepletion(g)).toFixed(1)}`}
+                {REGION_LITH[t.rid] > 0.05 && ` · 🔋 литий ${REGION_LITH[t.rid].toFixed(1)}`}
+              </div>
             </div>
             <button class="btn sm" disabled={!!annexError(g, me, t.rid)} onClick={() => report(annex(g, me, t.rid))}>💰 {fmt(t.cost)}</button>
           </div>
@@ -150,6 +156,12 @@ export function CountryDialog({ id }: { id: number }) {
         <p class="small down" style={{ marginTop: '-6px' }}>🔥 Вооружает мятежников у нас — война с ней будет справедливой</p>
       )}
       {nearCollapse(g, id) && <p class="small down" style={{ marginTop: '-6px' }}>💔 Глубокий кризис: страна на грани распада</p>}
+      {aidDonors(g, id).length > 0 && (
+        <p class="small" style={{ marginTop: '-6px' }}>🤲 Программы развития: {aidDonors(g, id).map((d) => (d === me ? 'наша' : COUNTRY_DEFS[d].name)).join(', ')}</p>
+      )}
+      {!aidDonors(g, id).includes(me) && aidLoyal(g, id, me) && (
+        <p class="small up" style={{ marginTop: '-6px' }}>🤲 Помнит нашу помощь: в ООН голосует заодно с нами</p>
+      )}
       {rebelsIn(g, id).length > 0 && (
         <p class="small" style={{ marginTop: '-6px' }}>✊ Мятежи: {rebelsIn(g, id).map((r) => REGIONS[r.region].name).join(', ')}</p>
       )}
@@ -171,6 +183,7 @@ export function CountryDialog({ id }: { id: number }) {
             ['💎 Миллиардеров', Math.round(c.billionaires)],
             ['🏢 Мировых компаний', s.companies],
             ['🔫 Оснащение армии', `${Math.round(s.equip * 100)}%`],
+            ...(s.oilProd > 0.05 || s.lithProd > 0.05 ? [['⛽ Нефть · 🔋 литий', `${s.oilProd.toFixed(1)} · ${s.lithProd.toFixed(1)} (нужно ${s.oilNeed.toFixed(1)} · ${s.lithNeed.toFixed(1)})`] as [string, string]] : []),
             ['🌾 Своей еды', s.hunger > 0 ? `голод ${Math.round(s.hunger * 100)}%` : `${Math.round((s.foodProd / Math.max(1, s.foodCons)) * 100)}% от нужного`],
             ...(wondersOf(g, id).length ? [['Чудеса света', wondersOf(g, id).map((w) => w.icon).join(' ')] as [string, string]] : []),
             ...(c.project ? [['Строит чудо', `${WONDER_BY_ID[c.project.id].icon} ${Math.round((1 - c.project.left / c.project.total) * 100)}%`] as [string, string]] : []),
@@ -198,6 +211,14 @@ export function CountryDialog({ id }: { id: number }) {
           <button class="btn" disabled={g.countries[me].money < giftCost(g, id)} onClick={() => { toast(gift(g, me, id), 'good'); emit(); }}>🎁 {fmt(giftCost(g, id))}</button>
           <button class="btn ghost" disabled={!!p.war} onClick={() => { toast(demandTribute(g, me, id), 'info'); emit(); }}>💰 Требовать дань</button>
         </div>
+        {!p.war && aidError(g, me, id) !== AID_NOT_POOR && (
+          <button class="btn ghost block" disabled={!!aidError(g, me, id)} title={aidError(g, me, id) ?? undefined}
+            onClick={() => setUI({ modal: { kind: 'confirm', title: '🤲 Программа развития', okText: 'Начать',
+              text: `Год вкладываться в страну ${COUNTRY_DEFS[id].name}: школы, дороги, больницы. Стоит ${fmt(devAidCost(g, me))} 💰 (40% сразу получит её казна). Ей — производительность +6% и стабильность +3 на год, нам — отношения +22, а в ООН она будет голосовать заодно с нами ещё ${Math.round(AID_MEMORY / 365)} года после программы.`,
+              ok: () => report(startAid(g, me, id)) } })}>
+            🤲 Программа развития · 💰 {fmt(devAidCost(g, me))}
+          </button>
+        )}
         {p.war ? (
           <PeaceButton enemy={id} block />
         ) : (
@@ -224,7 +245,7 @@ export function CountryDialog({ id }: { id: number }) {
           <button class="btn ghost block" disabled={!!inviteError(g, id)} title={inviteError(g, id) ?? undefined} onClick={() => {
             const err = invite(g, id);
             if (err) return report(err);
-            toast(inOrder(g, id) ? `${g.order!.emblem} ${COUNTRY_DEFS[id].name} — наш брат!` : `🚪 ${COUNTRY_DEFS[id].name} отказалась от посвящения`, inOrder(g, id) ? 'good' : 'bad');
+            toast(inOrder(g, id) ? `${g.order!.emblem} ${COUNTRY_DEFS[id].name} — наш брат!` : `🚪 ${COUNTRY_DEFS[id].name} ${vb(id, 'отказался')} от посвящения`, inOrder(g, id) ? 'good' : 'bad');
             emit();
           }}>
             {g.order.emblem} Позвать в ложу · шанс {Math.round(joinChance(g, id) * 100)}% · 💰 {fmt(inviteCost(g))}

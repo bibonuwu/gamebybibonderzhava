@@ -2,7 +2,8 @@
 // дела об агрессии, Совет Безопасности и архив решений.
 import { useState } from 'preact/hooks';
 import {
-  castVote, draft, forecastRes, isSG, pending, proposeError, proposeRes, RES_BY_ID, resCost, RESOLUTIONS, resWait, type ResDef,
+  castVote, draft, forecastRes, isSG, lobby, lobbyCost, lobbyError, lobbyTargets, pending, proposeError, proposeRes, RES_BY_ID, resCost, RESOLUTIONS,
+  resWait, type ResDef,
 } from '../../game/assembly';
 import { fmt, fmtDate, fmtDays } from '../../game/format';
 import { isMember } from '../../game/lodge';
@@ -146,7 +147,25 @@ function ResVote({ r }: { r: UNResolution }) {
           {def.yesHint && <div class="small muted" style={{ marginTop: '4px' }}>Если «за» и примут: {def.yesHint(g, r)}</div>}
         </>
       )}
+      <LobbyButton r={r} />
     </div>
+  );
+}
+
+/** Лоббирование: щедро «отблагодарить» колеблющихся, чтобы голосовали как мы. Газеты могут узнать. */
+function LobbyButton({ r }: { r: UNResolution }) {
+  const g = getGame()!;
+  const list = lobbyTargets(g, r);
+  if (!list.length) return r.lobby?.length ? <div class="small muted" style={{ marginTop: '4px' }}>💼 Обещали голосовать как мы: {r.lobby.map((k) => COUNTRY_DEFS[k].name).join(', ')}</div> : null;
+  const cost = list.reduce((a, k) => a + lobbyCost(g, k), 0);
+  const err = lobbyError(g, r);
+  return (
+    <button class="btn ghost sm block" style={{ marginTop: '6px' }} disabled={!!err} title={err ?? undefined}
+      onClick={() => setUI({ modal: { kind: 'confirm', title: '💼 Убедить колеблющихся?', okText: 'Убедить', danger: true,
+        text: `${list.map((k) => COUNTRY_DEFS[k].name).join(', ')} — их можно «убедить» голосовать как мы за ${fmt(cost)} 💰 (деньги уйдут им). Если газеты узнают (почти каждый пятый раз) — скандал: стабильность −4, отношения с ними −5.`,
+        ok: () => report(lobby(g, r.id)) } })}>
+      💼 Убедить колеблющихся ({list.length}) · 💰 {fmt(cost)}
+    </button>
   );
 }
 

@@ -17,8 +17,11 @@ import { botDebt } from './debt';
 import { brothers } from './lodge';
 import { orderBrothers } from './order';
 import { aiNuclear, BOMB_TECH, isNuclear } from './nuclear';
+import { botMegas } from './megaprojects';
 import { botPeople } from './people';
+import { botProsperity } from './prosperity';
 import { botProxy, botRebels } from './rebels';
+import { borderDeposits, hasDeposit, resBoost, resHunger } from './resources';
 import {
   buyCompany, buyCompanyError, companyPrice, foundCompany, foundCost, foundError, geniusError, geniusPrice, grantCost, grantError,
   hireGenius, hireScientists, inviteInvestors, investorsCost, investorsError, richTax, richTaxError, sciGrant, sciPrice,
@@ -28,14 +31,14 @@ import type { BudgetKey, BuildingType, Company, GameState, Genius, GovType, Prop
 import { botSpy } from './spy';
 import { fearsUN, sanctions, victimsOf } from './un';
 import { rivals, startWonder, WONDERS, wonderCost, wonderError, wonderInRegion } from './wonders';
-import { REGIONS, REGION_OF } from './world';
+import { REGIONS, REGION_OF, vb } from './world';
 
 const BRANCH_PREF: Record<string, string[]> = {
   aggressor: ['Армия', 'Экономика', 'Атом'],
-  trader: ['Торговля', 'Экономика'],
-  scientist: ['Наука', 'Медицина', 'Атом'],
+  trader: ['Торговля', 'Экономика', 'Экология'],
+  scientist: ['Наука', 'Медицина', 'Атом', 'Экология'],
   fanatic: ['Культура', 'Армия'],
-  cautious: ['Армия', 'Сельское хозяйство', 'Медицина'],
+  cautious: ['Армия', 'Сельское хозяйство', 'Медицина', 'Экология'],
 };
 
 /** Доля продуманных решений: лёгкие боты чаще действуют наугад. */
@@ -76,6 +79,10 @@ export function aiTurn(g: GameState, i: number) {
   considerWar(g, i, th);
   if ((Math.floor(g.day / 4) + i) % 5 === 0) aiDiplomacy(g, i, th);
   botPeople(g, i, smart(g));
+  if ((Math.floor(g.day / 4) + i) % 3 === 1) {
+    botProsperity(g, i);
+    botMegas(g, i);
+  }
   botDebt(g, i);
   botSpy(g, i);
   botRebels(g, i);
@@ -295,7 +302,9 @@ function doConstruction(g: GameState, i: number, th: Threat) {
     const c = g.countries[i];
     const s = STATS[i];
     if (s.constructing >= s.slots || c.money <= 0) return;
-    const budget = c.money * (th.enemies.length ? 0.3 : 0.55);
+    // копим на мегапроект — на стройку идёт меньше
+    const saving = (c.aiFlags.saveMega ?? 0) > g.day;
+    const budget = c.money * (th.enemies.length ? 0.3 : saving ? 0.2 : 0.55);
     const type = weightedPick(g, buildWeights(g, i, th));
     if (!type) return;
     const opt = bestBuildOption(g, i, type, smart(g));
@@ -307,7 +316,7 @@ function doConstruction(g: GameState, i: number, th: Threat) {
 
 function doWonders(g: GameState, i: number, th: Threat) {
   const c = g.countries[i];
-  if (c.project || th.enemies.length || rand(g) > 0.15) return;
+  if (c.project || th.enemies.length || (c.aiFlags.saveMega ?? 0) > g.day || rand(g) > 0.15) return;
   let best: string | null = null, bestScore = 0;
   for (const w of WONDERS) {
     if (wonderError(g, i, w.id)) continue;
@@ -328,23 +337,25 @@ function expandPeacefully(g: GameState, i: number, th: Threat) {
   if (c.personality === 'aggressor' && rand(g) > 0.4) return;
   let best = -1, bestV = Infinity;
   for (const t of reachableTargets(g, i, true)) {
-    const v = annexCost(g, i, t.rid) / Math.max(1, g.regions[t.rid].pop + REGIONS[t.rid].tiles.length * 20000);
+    const v = annexCost(g, i, t.rid) / Math.max(1, g.regions[t.rid].pop + REGIONS[t.rid].tiles.length * 20000) / resBoost(g, i, t.rid);
     if (v < bestV) { bestV = v; best = t.rid; }
   }
   if (best >= 0 && annexCost(g, i, best) <= c.money * 0.5 && !annex(g, i, best)) c.aiFlags.lastAnnex = g.day;
 }
 
-/** Захват нейтральных земель силой (агрессоры и фанатики). */
+/** Захват нейтральных земель силой (агрессоры и фанатики, а в сырьевой голод — и все остальные, за месторождениями). */
 function grabNeutral(g: GameState, i: number) {
   const c = g.countries[i];
-  if ((c.personality !== 'aggressor' && c.personality !== 'fanatic') || g.day <= 60) return;
+  const warlike = c.personality === 'aggressor' || c.personality === 'fanatic';
+  if ((!warlike && resHunger(g, i) < 0.6) || g.day <= 60) return;
   if (g.battles.some((b) => b.att === i)) return;
-  const options = reachableTargets(g, i, true).filter((t) => t.via === 'land' && !g.battles.some((b) => b.region === t.rid));
+  const options = reachableTargets(g, i, true)
+    .filter((t) => t.via === 'land' && !g.battles.some((b) => b.region === t.rid) && (warlike || hasDeposit(t.rid)));
   if (!options.length) return;
   let best = -1, bestV = 0, bestNeed = 0;
   for (const t of smart(g) ? options : [pick(g, options)]) {
     const need = soldiersFor(g, i, t.rid, 0.8);
-    const v = (g.regions[t.rid].pop + REGIONS[t.rid].tiles.length * 20000) / Math.max(1, need);
+    const v = ((g.regions[t.rid].pop + REGIONS[t.rid].tiles.length * 20000) / Math.max(1, need)) * resBoost(g, i, t.rid);
     if (need < c.soldiers * 0.35 && v > bestV) { bestV = v; best = t.rid; bestNeed = need; }
   }
   if (best >= 0 && rand(g) < 0.4 * DIFFICULTY[g.difficulty].aggression && !launchAttack(g, i, best, bestNeed * 1.15)) {
@@ -387,7 +398,7 @@ function wageWar(g: GameState, i: number, th: Threat) {
   for (const t of targets) {
     const need = soldiersFor(g, i, t.rid, 0.75);
     if (need * 1.1 > avail) continue;
-    let value = 1 + g.regions[t.rid].pop / 2e6 + REGIONS[t.rid].tiles.length * 0.02;
+    let value = (1 + g.regions[t.rid].pop / 2e6 + REGIONS[t.rid].tiles.length * 0.02) * resBoost(g, i, t.rid);
     if (careful) {
       if (g.countries[t.owner].capital === t.rid) value *= 2; // столица — удар по стабильности врага
       if (wonderInRegion(g, t.rid)) value *= 1.6; // чудо света перейдёт к нам
@@ -475,6 +486,12 @@ function warScore(g: GameState, i: number, j: number, leader: number, breakPact:
   if ((brothers(g, i, j) || orderBrothers(g, i, j)) && rel > -60) return 0; // брат на брата не идёт
   let [need, relMax] = WAR_NEED[c.personality] ?? [2, -50];
   if (c.personality === 'fanatic' && g.countries[j].religion === c.religion) relMax = -40;
+  // сырьевой голод: за нефтью и литием соседа идут и при меньшем перевесе, и с теми, с кем не враждовали
+  const prize = resHunger(g, i) > 0.8 ? borderDeposits(g, i, j) : 0;
+  if (prize > 0.5) {
+    need *= 0.8;
+    relMax += 20;
+  }
   if (j === leader && busy > 0) {
     // коалиция против лидера, который уже воюет
     need *= 0.6;
@@ -483,7 +500,7 @@ function warScore(g: GameState, i: number, j: number, leader: number, breakPact:
   const slack = recheck && j !== g.player ? 0.9 : 1;
   const relSlack = recheck ? (j === g.player ? 5 : 15) : 0;
   if (ratio < need * slack || rel > relMax + relSlack) return 0;
-  return ratio * (1 + Math.max(0, -rel) / 100) * (j === leader ? 1.5 : 1);
+  return ratio * (1 + Math.max(0, -rel) / 100) * (j === leader ? 1.5 : 1) * (prize > 0.5 ? 1.3 : 1);
 }
 
 function considerWar(g: GameState, i: number, th: Threat) {
@@ -498,7 +515,7 @@ function considerWar(g: GameState, i: number, th: Threat) {
     if (!th.enemies.length && g.countries[prep].alive && warScore(g, i, prep, leader, true, true) > 0) {
       if (prep === leader && enemiesOf(g, prep).length) news(g, `🤜 ${cname(g, i)} присоединяется к коалиции против страны ${cname(g, prep)}`, 'war');
       declareWar(g, i, prep);
-    } else if (prep === g.player) log(g, `🕵️ Разведка: ${cname(g, i)} отказалась от планов нападения на нас`, 'good');
+    } else if (prep === g.player) log(g, `🕵️ Разведка: ${cname(g, i)} ${vb(i, 'отказался')} от планов нападения на нас`, 'good');
     return;
   }
   if (g.day < WAR_GRACE_DAYS || th.enemies.length) return;
@@ -519,10 +536,13 @@ function considerWar(g: GameState, i: number, th: Threat) {
     // сначала подготовка: закупка оружия, запасы еды, мобилизация
     c.aiFlags.prepTarget = best;
     c.aiFlags.prepUntil = g.day + (best === g.player ? 25 : 15);
+    const forOil = resHunger(g, i) > 0.8 && borderDeposits(g, i, best) > 0.5;
+    if (forOil) g.counters.oilWars = (g.counters.oilWars ?? 0) + 1;
     if (best === g.player) {
       sfx('alarm');
-      log(g, `🕵️ Разведка: ${cname(g, i)} скупает оружие и стягивает войска к нашим границам! Нападение возможно через ~25 дней`, 'war');
-    } else if (rand(g) < 0.4) news(g, `🪖 ${cname(g, i)} объявила мобилизацию`, 'war');
+      log(g, `🕵️ Разведка: ${cname(g, i)} скупает оружие и стягивает войска к нашим границам${forOil ? ' — ей нужны наши месторождения' : ''}! Нападение возможно через ~25 дней`, 'war');
+    } else if (forOil) news(g, `⛽ ${cname(g, i)} стягивает войска к месторождениям страны ${cname(g, best)}`, 'war');
+    else if (rand(g) < 0.4) news(g, `🪖 ${cname(g, i)} ${vb(i, 'объявил')} мобилизацию`, 'war');
   }
 }
 
@@ -698,7 +718,7 @@ function aiDiplomacy(g: GameState, i: number, th: Threat) {
     addRel(g, i, me, 5);
     g.counters.lastGiftIn = g.day;
     sfx('coins');
-    log(g, `🎁 ${cname(g, i)} в знак дружбы прислала вам подарок: +${fmt(amount)} 💰`, 'good');
+    log(g, `🎁 ${cname(g, i)} в знак дружбы ${vb(i, 'прислал')} вам подарок: +${fmt(amount)} 💰`, 'good');
   }
 }
 
@@ -767,7 +787,7 @@ export function answerProposal(g: GameState, id: number, accept: boolean) {
     } else {
       addRel(g, me, from, -20);
       if (!warError(g, from, me) && !fearsUN(g, from, me) && rand(g) < 0.5) declareWar(g, from, me);
-      else log(g, `${cname(g, from)} недовольна отказом`, 'info');
+      else log(g, `${cname(g, from)} ${vb(from, 'недоволен', 'недовольна', 'недовольны')} отказом`, 'info');
     }
     return;
   }

@@ -74,18 +74,39 @@ export function parseSave(raw: string): Parsed {
   if (!g || typeof g !== 'object' || !Array.isArray(g.countries) || !Array.isArray(g.regions) || typeof g.day !== 'number') {
     return { error: 'Это не сохранение «Державы»' };
   }
-  if (g.version > SAVE_VERSION) return { error: 'Сохранение из более новой версии игры — обновите игру' };
-  if (g.version !== SAVE_VERSION) return { error: 'Сохранение из старой версии игры — эта версия его не откроет' };
+  if (typeof g.version !== 'number' || g.version > SAVE_VERSION) return { error: 'Сохранение из более новой версии игры — обновите игру' };
   if (g.regions.length !== REGIONS.length || g.countries.length !== COUNTRY_DEFS.length) {
     return { error: 'Сохранение сделано на другой карте мира — эта версия его не откроет' };
   }
   try {
+    // старое сохранение обновляем по шагам: 1 → 2 → … → нынешняя версия
+    while (g.version < SAVE_VERSION) {
+      const step = UPGRADES[g.version];
+      if (!step) return { error: 'Сохранение из слишком старой версии игры — эта версия его не откроет' };
+      step(g);
+      g.version++;
+    }
     migrate(g);
   } catch {
     return { error: 'Сохранение повреждено' };
   }
   return { g };
 }
+
+/**
+ * Шаги обновления сохранений: ключ — версия, из которой обновляем. Шаг нужен, когда старые данные надо переделать;
+ * новые поля проще дополнить в migrate() — так сохранения остаются совместимыми без новой версии.
+ */
+const UPGRADES: Record<number, (g: GameState) => void> = {
+  // 1 → 2: эпоха ресурсов и климата. Её поля (климат, нефть и литий, ожидания, старение) появятся при первом пересчёте
+  // (computeAll → initLate): мир «узнаёт» о них с момента загрузки. Прежние дела ООН не трогаем.
+  1: (g) => {
+    for (const c of g.countries) {
+      delete c.gdp0;
+      c.megas ??= {};
+    }
+  },
+};
 
 /** Поля, появившиеся позже: старые сохранения продолжают работать. */
 function migrate(g: GameState) {
@@ -116,6 +137,8 @@ function migrate(g: GameState) {
     }
   }
   initSociety(g, !g.market);
+  g.aid ??= [];
+  g.firsts ??= {};
 }
 
 export interface SlotInfo {

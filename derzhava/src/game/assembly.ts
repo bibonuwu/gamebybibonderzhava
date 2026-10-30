@@ -8,11 +8,14 @@ import { addRel, atWar, cname, makePeace, peekPair } from './actions';
 import { computeAll, STATS } from './economy';
 import { fmt } from './format';
 import { isMember } from './lodge';
+import { aidLoyal } from './megaprojects';
 import { arsenalOf, hbombsOf, nukesOf } from './nuclear';
+import { incomeNow } from './prosperity';
 import { inOrder } from './order';
 import { banner, log, news, pick, rand, sfx } from './state';
 import type { AssemblyState, GameState, GAVote, Personality, TempMod, UNResolution } from './types';
 import { countriesN, isAggressor, P5 } from './un';
+import { vb } from './world';
 
 const VOTE_DAYS = 5; // от внесения резолюции игрока до голосования
 const BOT_VOTE_DAYS = 8; // по чужим резолюциям игрок успевает подумать
@@ -176,7 +179,7 @@ export const RESOLUTIONS: ResDef[] = [
       }
       v.money += sum;
       mod(g, t, 'stab', 3, 180, 'Помощь ООН');
-      return `${cname(g, t)} получила ${fmt(sum)} 💰 и гуманитарные грузы`;
+      return `${cname(g, t)} ${vb(t, 'получил')} ${fmt(sum)} 💰 и гуманитарные грузы`;
     },
     yesHint: (g, r) => (r.target === g.player ? 'помощь получим мы' : `отдадим ≈ ${fmt(donation(g, g.player))} 💰, отношения +5`) },
   { id: 'disarm', icon: '☢️', name: 'Ядерное разоружение', cost: 30, cd: 730,
@@ -208,17 +211,18 @@ export const RESOLUTIONS: ResDef[] = [
       ? `уничтожим половину своего арсенала (${arsenalOf(g, g.player)}) и сборку`
       : 'нам разоружать нечего') },
   { id: 'climate', icon: '🌍', name: 'Климатическое соглашение', cost: 15, cd: 730,
-    desc: 'Все, кто голосует «за», на два года: урожай +5%, стабильность +2, но производство −2%',
-    stance: (g, k, r) => 12 + GREEN[g.countries[k].personality] + g.rel[k][r.by] / 4,
+    desc: 'Все, кто голосует «за», на два года: выбросы −15%, урожай +5%, стабильность +2, но производство −2%',
+    stance: (g, k, r) => 12 + GREEN[g.countries[k].personality] + g.rel[k][r.by] / 4 + Math.max(0, (g.climate?.temp ?? 1.3) - 1.6) * 15,
     pass: (g, _r, yes) => {
       for (const k of yes) {
         mod(g, k, 'food', 0.05, 730, 'Климатическое соглашение');
         mod(g, k, 'stab', 2, 730, 'Климатическое соглашение');
         mod(g, k, 'prod', -0.02, 730, 'Климатическое соглашение');
+        mod(g, k, 'emis', -0.15, 730, 'Климатическое соглашение');
       }
-      return `соглашение подписали: ${countriesN(yes.length)} — урожай +5%, стабильность +2, производство −2% на два года`;
+      return `соглашение подписали: ${countriesN(yes.length)} — выбросы −15%, урожай +5%, стабильность +2, производство −2% на два года`;
     },
-    yesHint: () => 'на 2 года: урожай +5%, стабильность +2, производство −2%' },
+    yesHint: () => 'на 2 года: выбросы −15%, урожай +5%, стабильность +2, производство −2%' },
 ];
 export const RES_BY_ID = Object.fromEntries(RESOLUTIONS.map((r) => [r.id, r])) as Record<string, ResDef>;
 
@@ -241,6 +245,8 @@ function voteOf(g: GameState, k: number, r: UNResolution, def: ResDef, noise = 0
   if (k === r.by) return 'yes';
   if (k === me) return r.by === me ? 'yes' : r.myVote ?? 'abstain';
   let s = def.stance(g, k, r) + noise;
+  // кому автор помогал программой развития — поддерживает его резолюцию
+  if (r.by !== me && k !== r.target && k !== r.target2 && aidLoyal(g, k, r.by)) s += 18;
   const mv = r.by === me ? 'yes' : r.myVote;
   // о себе самой страна решает сама, чей бы братом она ни была
   if ((mv === 'yes' || mv === 'no') && k !== r.target && k !== r.target2) {
@@ -252,6 +258,8 @@ function voteOf(g: GameState, k: number, r: UNResolution, def: ResDef, noise = 0
     }
     if (g.lodge.status === 'member' && isMember(g, k)) s += 12 * dir; // братья «Всевидящего ока» тоже помнят о нас
     if (isSG(g)) s += 10 * dir; // вес Генсека
+    if (aidLoyal(g, k, me)) s += 22 * dir; // помним нашу программу развития
+    if (r.lobby?.includes(k)) s += 45 * dir; // нас «убедили»
   }
   return s > THRESHOLD ? 'yes' : s < -THRESHOLD ? 'no' : 'abstain';
 }
@@ -311,6 +319,54 @@ export function proposeRes(g: GameState, kind: string, t?: number, t2?: number):
   g.counters.unRes = (g.counters.unRes ?? 0) + 1;
   sfx('paper');
   log(g, `🌐 Мы внесли в Генассамблею резолюцию «${resTitle(g, r)}». Голосование через ${VOTE_DAYS} дн.`, 'info', false);
+  return null;
+}
+
+// ---------- лоббирование ----------
+/** Как голосует игрок по резолюции (нет — не определился). */
+const myDir = (g: GameState, r: UNResolution): GAVote | null => (r.by === g.player ? 'yes' : r.myVote === 'yes' || r.myVote === 'no' ? r.myVote : null);
+/** Цена «убеждения» одной страны: двадцать дней её дохода. */
+export const lobbyCost = (g: GameState, k: number) => incomeNow(g, k) * 20;
+/** Кого можно уговорить голосовать как мы: сейчас голосуют иначе, но не упираются. */
+export function lobbyTargets(g: GameState, r: UNResolution): number[] {
+  const mv = myDir(g, r);
+  const def = RES_BY_ID[r.kind];
+  if (!mv || !def || r.passed !== undefined) return [];
+  return alive(g).filter((k) => {
+    if (k === g.player || k === r.by || k === r.target || k === r.target2 || r.lobby?.includes(k)) return false;
+    if (voteOf(g, k, r, def) === mv) return false;
+    // упёртых не переубедить никакими деньгами
+    return Math.abs(def.stance(g, k, r)) < 40;
+  });
+}
+export function lobbyError(g: GameState, r: UNResolution): string | null {
+  if (!myDir(g, r)) return 'Сначала решите, как голосуем мы';
+  const list = lobbyTargets(g, r);
+  if (!list.length) return 'Некого убеждать';
+  if (g.countries[g.player].money < list.reduce((a, k) => a + lobbyCost(g, k), 0)) return 'Не хватает денег';
+  return null;
+}
+/** Щедро «отблагодарить» колеблющихся. Газеты могут узнать — будет скандал. */
+export function lobby(g: GameState, id: number): string | null {
+  const r = g.assembly.res.find((x) => x.id === id);
+  if (!r) return 'Голосование уже закончилось';
+  const err = lobbyError(g, r);
+  if (err) return err;
+  const list = lobbyTargets(g, r);
+  const me = g.countries[g.player];
+  for (const k of list) {
+    const v = lobbyCost(g, k);
+    me.money -= v;
+    g.countries[k].money += v;
+  }
+  r.lobby = [...(r.lobby ?? []), ...list];
+  g.counters.lobby = (g.counters.lobby ?? 0) + 1;
+  sfx('coins');
+  if (rand(g) < 0.18) {
+    mod(g, g.player, 'stab', -4, 120, 'Скандал: подкуп голосов в ООН');
+    for (const k of list) addRel(g, g.player, k, -5);
+    log(g, `📰 Газеты узнали, что мы «убеждали» страны перед голосованием в ООН: скандал, стабильность −4`, 'bad');
+  } else log(g, `💼 Колеблющиеся страны (${list.length}) обещали голосовать как мы`, 'good');
   return null;
 }
 
@@ -534,7 +590,7 @@ function electSG(g: GameState, mode: 'run' | 'campaign' | 'support' | 'skip') {
     banner({ icon: '🌐', title: 'Генеральный секретарь ООН', text: 'Пять лет мир слушает нас: стабильность +3, резолюции вдвое дешевле', kind: 'gold' });
   } else if (running) {
     sfx('defeat');
-    const why = res.veto[me] !== undefined ? `${cname(g, res.veto[me])} наложила вето на нашу кандидатуру` : `у нас ${votesN(res.votes[me])}`;
+    const why = res.veto[me] !== undefined ? `${cname(g, res.veto[me])} ${vb(res.veto[me], 'наложил')} вето на нашу кандидатуру` : `у нас ${votesN(res.votes[me])}`;
     log(g, `🌐 Генсеком ООН избрана страна ${winner >= 0 ? cname(g, winner) : '—'}: ${why}`, 'bad', false);
   } else if (winner >= 0) {
     if (prev === me) log(g, `🌐 Наш срок Генсека окончен. Новый Генеральный секретарь ООН — ${cname(g, winner)}`, 'info');

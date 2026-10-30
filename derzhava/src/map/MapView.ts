@@ -56,6 +56,9 @@ const EMOJI_FONT = '"Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans
 
 const backOut = (p: number) => 1 + 2.7 * Math.pow(p - 1, 3) + 1.7 * Math.pow(p - 1, 2);
 
+/** Нажатие на карту: где и когда, клетка и точка карты под ним, ушёл ли палец дальше дрожания (slop), годится ли в тап. */
+type Press = { x: number; y: number; t: number; wx: number; wy: number; tile: number; moved: boolean; tap: boolean; slop: number };
+
 export class MapView {
   app = new Application();
   world = new Container();
@@ -82,10 +85,17 @@ export class MapView {
   private depth = new Int16Array(N);
   private clouds: { sp: Sprite; shadow: Sprite; v: number }[] = [];
   private hoverTile = -1;
-  private vel = { x: 0, y: 0, t: 0 }; // инерция после перетаскивания (пикс/мс)
+  private vel = { x: 0, y: 0 }; // инерция после перетаскивания (пикс/мс)
+  /** След пальца или мыши за последние ~150 мс: по нему считается скорость броска. */
+  private trail: { x: number; y: number; t: number }[] = [];
   private zoomGoal: { z: number; sx: number; sy: number } | null = null;
   private panKeys = new Set<string>();
+  private keyVel = { x: 0, y: 0 }; // клавиши разгоняют и тормозят карту плавно
+  /** Shift зажат — клавиши двигают карту быстрее. */
+  panFast = false;
   private lastTap = { t: 0, x: 0, y: 0 };
+  private screenW = 0;
+  private screenH = 0;
   private popIn = false; // новые здания появляются с анимацией (но не при загрузке партии)
   private buildKeys = new Map<number, string>();
   private progressTiles: number[] = [];
@@ -124,8 +134,11 @@ export class MapView {
   private game: GameState | null = null;
   private selected = -1;
   private pointers = new Map<number, { x: number; y: number }>();
-  private down: { x: number; y: number; t: number; moved: boolean } | null = null;
-  private pinchDist = 0;
+  private down: Press | null = null;
+  /** Щипок: середина между пальцами и расстояние между ними на прошлом шаге. */
+  private pinch: { x: number; y: number; d: number } | null = null;
+  /** Два пальца коснулись и отпустили, не двигаясь, — отдалить. */
+  private twoTap: { t: number; x: number; y: number; d: number; moved: boolean } | null = null;
   private tween: { fx: number; fy: number; fz: number; tx: number; ty: number; tz: number; t: number; dur: number } | null = null;
   onTap: ((tile: number) => void) | null = null;
   ready = false;
@@ -171,7 +184,8 @@ export class MapView {
     this.seaOver.addChild(this.sea.over);
     this.bindInput();
     this.app.ticker.add(() => this.frame());
-    window.addEventListener('resize', () => this.clamp());
+    // размер окна Pixi меняет в следующем кадре — его ловит frame(); здесь только сброс жеста
+    window.addEventListener('blur', () => this.resetInput());
     this.ready = true;
   }
 
@@ -1133,6 +1147,31 @@ export class MapView {
     if (cap) this.focusTile(cap.center, Math.max(1.5, this.world.scale.x));
   }
 
+  /** Выбранная клетка не должна прятаться под листом снизу (cover — его края на экране) или под верхней панелью
+   * (top — её низ): если закрыта, карта плавно отъезжает. Уже летим к клетке — поправляем цель перелёта. */
+  reveal(tile: number, cover: { left: number; right: number; top: number }, top: number) {
+    if (tile < 0 || !this.ready) return;
+    const tw = this.tween;
+    const z = tw ? tw.tz : this.world.scale.x;
+    const x = tw ? tw.tx : this.world.x, y = tw ? tw.ty : this.world.y;
+    const [cx, cy] = tileCenter(tile);
+    const sx = x + cx * z, sy = y + cy * z;
+    const m = S * z + 16; // сама клетка и кольцо выделения
+    const bottom = cover.top;
+    if (bottom - top < m * 3) return; // лист занял почти весь экран — двигать некуда
+    const under = sy > bottom - m && sx > cover.left - m && sx < cover.right + m;
+    if (!under && sy > top + m) return;
+    const [tx, ty] = this.clampPos(x, y + (top + bottom) / 2 - sy, z);
+    if (tw) {
+      tw.tx = tx;
+      tw.ty = ty;
+      return;
+    }
+    this.tween = { fx: this.world.x, fy: this.world.y, fz: z, tx, ty, tz: z, t: 0, dur: 420 };
+    this.zoomGoal = null;
+    this.vel.x = this.vel.y = 0;
+  }
+
   /** Стрелки/WASD: dir — up/down/left/right, пока клавиша зажата. */
   keyPan(dir: string, down: boolean) {
     if (down) {
@@ -1142,6 +1181,8 @@ export class MapView {
   }
   clearKeys() {
     this.panKeys.clear();
+    this.keyVel.x = this.keyVel.y = 0;
+    this.panFast = false;
   }
 
   /** Карту закрыла вкладка — не рисуем её вовсе (батарея); вернулись — время эффектов идёт дальше. */
@@ -1149,16 +1190,22 @@ export class MapView {
     if (on === this.active) return;
     this.active = on;
     if (on) this.app.ticker.start();
-    else this.app.ticker.stop();
+    else {
+      this.app.ticker.stop();
+      this.resetInput();
+      this.clearKeys();
+    }
   }
 
   // ---------- кадр ----------
   private frame() {
     const dt = this.app.ticker.deltaMS;
     const now = performance.now();
+    const sw = this.app.screen.width, sh = this.app.screen.height;
+    if (sw !== this.screenW || sh !== this.screenH) this.resized(sw, sh);
     // шейдер воды на весь экран дорог: 60 кадров — когда карту двигают, в покое хватит 30 (без эффектов — 15)
     const busy = this.pointers.size > 0 || this.panKeys.size > 0 || !!this.tween || !!this.zoomGoal
-      || !!this.vel.x || !!this.vel.y || this.shake > 0 || this.screenFlash.alpha > 0;
+      || !!this.vel.x || !!this.vel.y || !!this.keyVel.x || !!this.keyVel.y || this.shake > 0 || this.screenFlash.alpha > 0;
     const fps = busy ? 60 : this.fancy ? 30 : 15;
     if (this.app.ticker.maxFPS !== fps) this.app.ticker.maxFPS = fps;
     if (this.tween) {
@@ -1194,7 +1241,6 @@ export class MapView {
       if (this.shake <= 0) this.app.stage.position.set(0, 0);
     }
     this.animateEffects(dt);
-    const sw = this.app.screen.width, sh = this.app.screen.height;
     const wx = this.world.x, wy = this.world.y;
     this.sea?.update(dt, now, z, { x0: -wx / z, y0: -wy / z, x1: (sw - wx) / z, y1: (sh - wy) / z }, this.fancy);
   }
@@ -1249,16 +1295,28 @@ export class MapView {
   private moveCamera(dt: number) {
     if (this.zoomGoal) {
       const gl = this.zoomGoal;
+      // окно могло сжаться, пока камера догоняла цель: недостижимый масштаб держал бы карту в 60 кадрах вечно
+      gl.z = this.clampZoom(gl.z);
       const z0 = this.world.scale.x;
       const z = z0 + (gl.z - z0) * (1 - Math.exp(-dt / 70));
       this.zoomAt(gl.sx, gl.sy, z / z0);
-      if (Math.abs(gl.z - this.world.scale.x) < gl.z * 0.002) this.zoomGoal = null;
+      if (Math.abs(gl.z - this.world.scale.x) < gl.z * 0.002) {
+        this.zoomAt(gl.sx, gl.sy, gl.z / this.world.scale.x);
+        this.zoomGoal = null;
+      }
     }
-    if (this.panKeys.size) {
-      const v = 0.75 * dt;
-      const k = this.panKeys;
-      this.world.x += ((k.has('left') ? 1 : 0) - (k.has('right') ? 1 : 0)) * v;
-      this.world.y += ((k.has('up') ? 1 : 0) - (k.has('down') ? 1 : 0)) * v;
+    const k = this.panKeys, kv = this.keyVel;
+    if (k.size || kv.x || kv.y) {
+      // клавиши: плавный разгон и торможение, по диагонали не быстрее, с Shift — быстрее
+      const dx = (k.has('left') ? 1 : 0) - (k.has('right') ? 1 : 0);
+      const dy = (k.has('up') ? 1 : 0) - (k.has('down') ? 1 : 0);
+      const v = (this.panFast ? 2 : 0.8) / (Math.hypot(dx, dy) || 1);
+      const a = 1 - Math.exp(-dt / (k.size ? 90 : 80));
+      kv.x += (dx * v - kv.x) * a;
+      kv.y += (dy * v - kv.y) * a;
+      if (!k.size && Math.hypot(kv.x, kv.y) < 0.03) kv.x = kv.y = 0;
+      this.world.x += kv.x * dt;
+      this.world.y += kv.y * dt;
       this.clamp();
     }
     if (!this.pointers.size && (this.vel.x || this.vel.y)) {
@@ -1283,14 +1341,30 @@ export class MapView {
   private clampZoom(z: number) {
     return Math.max(this.minZoom(), Math.min(4, z));
   }
-  /** Допустимое положение карты при масштабе z. */
+  /** Допустимое положение карты при масштабе z. Сверху и снизу карта может чуть заехать под панели;
+   * если она меньше экрана — стоит посередине, причём переход между этими случаями без скачка. */
   private clampPos(x: number, y: number, z: number): [number, number] {
     const sw = this.app.screen.width, sh = this.app.screen.height;
-    const w = WORLD_W * z, h = WORLD_H * z;
-    return [
-      w <= sw ? (sw - w) / 2 : Math.min(0, Math.max(sw - w, x)),
-      h <= sh ? (sh - h) / 2 : Math.min(80, Math.max(sh - h - 120, y)),
-    ];
+    const fit = (v: number, lo: number, hi: number) => (lo > hi ? (lo + hi) / 2 : Math.min(hi, Math.max(lo, v)));
+    return [fit(x, sw - WORLD_W * z, 0), fit(y, sh - WORLD_H * z - 120, 80)];
+  }
+  /** Окно изменило размер (поворот телефона, F11): что было в центре экрана, там и остаётся. */
+  private resized(sw: number, sh: number) {
+    if (this.screenW) {
+      const dx = (sw - this.screenW) / 2, dy = (sh - this.screenH) / 2;
+      this.world.x += dx;
+      this.world.y += dy;
+      const tw = this.tween;
+      if (tw) {
+        tw.fx += dx;
+        tw.tx += dx;
+        tw.fy += dy;
+        tw.ty += dy;
+      }
+    }
+    this.screenW = sw;
+    this.screenH = sh;
+    this.clamp();
   }
   private clamp() {
     const z = this.clampZoom(this.world.scale.x);
@@ -1314,19 +1388,40 @@ export class MapView {
       return { x: e.clientX - r.left, y: e.clientY - r.top };
     };
     el.addEventListener('pointerdown', (e) => {
-      el.setPointerCapture(e.pointerId);
+      // первый палец нового жеста: всё, что осталось от прошлого, — «призраки» потерянных отпусканий,
+      // с ними следующее касание считалось бы щипком и карту бы дёргало
+      if (e.isPrimary) this.pointers.clear();
+      try {
+        el.setPointerCapture(e.pointerId);
+      } catch { /* указатель уже исчез */ }
+      if (e.button === 1) e.preventDefault(); // средняя кнопка — без автопрокрутки браузера
       const p = pos(e);
+      // время самого события, а не обработки: если кадр игры затянулся, скорость броска всё равно верная
+      const now = e.timeStamp;
       this.pointers.set(e.pointerId, p);
       this.tween = null;
       this.zoomGoal = null;
-      this.vel = { x: 0, y: 0, t: performance.now() };
+      this.vel.x = this.vel.y = 0;
       el.style.cursor = 'grabbing';
       this.hover(-1);
-      if (this.pointers.size === 1) this.down = { ...p, t: performance.now(), moved: false };
-      if (this.pointers.size === 2) {
-        const [a, b] = [...this.pointers.values()];
-        this.pinchDist = Math.hypot(a.x - b.x, a.y - b.y);
-        if (this.down) this.down.moved = true;
+      const n = this.pointers.size;
+      if (n === 1) {
+        // клетку запоминаем сразу: пока палец дрожит, карта чуть едет, а выбрать надо то, во что нажали
+        const z = this.world.scale.x;
+        const wx = (p.x - this.world.x) / z, wy = (p.y - this.world.y) / z;
+        this.down = {
+          ...p, t: now, wx, wy, tile: this.tileAtWorld(wx, wy), moved: false,
+          // правой и средней кнопкой карту только двигают
+          tap: e.button === 0, slop: e.pointerType === 'mouse' ? 6 : 12,
+        };
+        this.trail = [{ ...p, t: now }];
+        this.pinch = this.twoTap = null;
+      } else {
+        const d = this.down;
+        const pinch = this.pinchState();
+        this.twoTap = n === 2 && d && !d.moved && now - d.t < 250 ? { t: now, ...pinch, moved: false } : null;
+        if (d) d.moved = true;
+        this.pinch = pinch;
       }
     });
     el.addEventListener('pointermove', (e) => {
@@ -1337,71 +1432,137 @@ export class MapView {
         if (e.pointerType === 'mouse' && !this.pointers.size) this.hover(this.tileAt(p.x, p.y));
         return;
       }
+      // кнопку отпустили, а pointerup потерялся (окно потеряло фокус) — жест закончен
+      if (e.pointerType === 'mouse' && e.buttons === 0) {
+        up(e);
+        return;
+      }
+      this.pointers.set(e.pointerId, p);
+      const now = e.timeStamp;
       if (this.pointers.size === 1) {
         this.world.x += p.x - prev.x;
         this.world.y += p.y - prev.y;
-        // скорость для инерции — сглаженная
-        const now = performance.now();
-        const ms = Math.max(1, now - this.vel.t);
-        this.vel.x = this.vel.x * 0.5 + ((p.x - prev.x) / ms) * 0.5;
-        this.vel.y = this.vel.y * 0.5 + ((p.y - prev.y) / ms) * 0.5;
-        this.vel.t = now;
-        if (this.down && Math.hypot(p.x - this.down.x, p.y - this.down.y) > 8) this.down.moved = true;
         this.clamp();
-      } else if (this.pointers.size === 2) {
-        const other = [...this.pointers.entries()].find(([id]) => id !== e.pointerId)![1];
-        const d = Math.hypot(p.x - other.x, p.y - other.y);
-        if (this.pinchDist > 0) {
-          const midX = (p.x + other.x) / 2, midY = (p.y + other.y) / 2;
-          this.world.x += (p.x - prev.x) / 2;
-          this.world.y += (p.y - prev.y) / 2;
-          this.zoomAt(midX, midY, d / this.pinchDist);
+        this.track(p, now);
+        const d = this.down;
+        if (d && !d.moved && Math.hypot(p.x - d.x, p.y - d.y) > d.slop) {
+          d.moved = true;
+          if (this.twoTap) this.twoTap.moved = true;
         }
-        this.pinchDist = d;
+      } else if (this.pinch) {
+        // оба пальца разом: середина ведёт карту, расстояние — масштаб, точка под серединой остаётся под ней
+        const a = this.pinch, b = this.pinchState();
+        this.world.x += b.x - a.x;
+        this.world.y += b.y - a.y;
+        this.zoomAt(b.x, b.y, b.d / a.d);
+        this.pinch = b;
+        const tt = this.twoTap;
+        if (tt && (Math.abs(b.d - tt.d) > 16 || Math.hypot(b.x - tt.x, b.y - tt.y) > 16)) tt.moved = true;
       }
-      this.pointers.set(e.pointerId, p);
     });
     const up = (e: PointerEvent) => {
       if (!this.pointers.has(e.pointerId)) return;
       this.pointers.delete(e.pointerId);
-      const now = performance.now();
-      if (this.pointers.size === 0 && this.down && !this.down.moved && now - this.down.t < 500) {
-        const { x, y } = this.down;
-        // двойной тап — приблизить к этому месту
-        if (now - this.lastTap.t < 320 && Math.hypot(x - this.lastTap.x, y - this.lastTap.y) < 30) {
-          this.lastTap.t = 0;
-          this.zoomGoal = { z: this.clampZoom(this.world.scale.x * 1.9), sx: x, sy: y };
-        } else {
-          this.lastTap = { t: now, x, y };
-          const tile = this.tileAt(x, y);
-          // по воде расходятся круги, рыбы разбегаются
-          if (tile >= 0 && isWater(tile) && this.fancy) {
-            const z = this.world.scale.x;
-            this.sea?.poke((x - this.world.x) / z, (y - this.world.y) / z);
-          }
-          if (tile >= 0) this.onTap?.(tile);
+      const now = e.timeStamp;
+      // отмена (системный жест, потерянный захват) — ни тапа, ни броска
+      const ok = e.type === 'pointerup';
+      const n = this.pointers.size;
+      if (n === 0) {
+        const d = this.down, tt = this.twoTap;
+        if (ok && tt && !tt.moved && now - tt.t < 400) {
+          // тап двумя пальцами — отдалить
+          this.zoomGoal = { z: this.clampZoom(this.world.scale.x / 1.9), sx: tt.x, sy: tt.y };
+        } else if (ok && d && d.tap && !d.moved && now - d.t < 500) {
+          this.tap(d, now);
+        } else if (ok && d?.moved) {
+          this.fling(now);
         }
-      }
-      // отпустили неподвижно — без инерции
-      if (now - this.vel.t > 80 || !this.down?.moved) this.vel.x = this.vel.y = 0;
-      if (this.pointers.size === 0) {
         this.down = null;
+        this.twoTap = null;
+        this.trail = [];
         el.style.cursor = 'grab';
+      } else if (n === 1) {
+        // остался один палец — он ведёт карту дальше с того места, где стоит, без рывка
+        const [p] = [...this.pointers.values()];
+        this.down = { ...p, t: now, wx: 0, wy: 0, tile: -1, moved: false, tap: false, slop: this.down?.slop ?? 12 };
+        this.trail = [{ ...p, t: now }];
       }
-      this.pinchDist = 0;
+      this.pinch = n >= 2 ? this.pinchState() : null;
     };
     el.addEventListener('pointerup', up);
     el.addEventListener('pointercancel', up);
+    el.addEventListener('lostpointercapture', up);
     el.addEventListener('pointerleave', () => this.hover(-1));
+    // правой кнопкой карту двигают — меню браузера не нужно
+    el.addEventListener('contextmenu', (e) => e.preventDefault());
     el.addEventListener('wheel', (e) => {
       e.preventDefault();
       this.tween = null;
       this.vel.x = this.vel.y = 0;
-      // колесо копит цель, камера плавно догоняет; тачпад (мелкие шаги) — сразу
-      const k = Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0018));
+      // колесо копит цель, камера плавно догоняет. Щипок на тачпаде приходит колесом с Ctrl мелкими шагами —
+      // ему чувствительность выше. Один щелчок — не больше чем в полтора раза, даже если в Windows прокрутка по 10 строк.
+      const pinch = e.ctrlKey && e.deltaMode === 0 && Math.abs(e.deltaY) < 50;
+      const step = e.deltaY * (e.deltaMode === 1 ? 0.05 : e.deltaMode === 2 ? 1 : pinch ? 0.01 : 0.0018);
+      const k = Math.exp(-Math.max(-0.4, Math.min(0.4, step)));
       const z = this.zoomGoal?.z ?? this.world.scale.x;
       this.zoomGoal = { z: this.clampZoom(z * k), sx: e.offsetX, sy: e.offsetY };
     }, { passive: false });
+  }
+
+  /** Середина и расстояние между первыми двумя пальцами. */
+  private pinchState() {
+    const [a, b] = [...this.pointers.values()];
+    return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, d: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)) };
+  }
+
+  private track(p: { x: number; y: number }, t: number) {
+    const tr = this.trail;
+    tr.push({ x: p.x, y: p.y, t });
+    while (tr.length > 2 && t - tr[0].t > 150) tr.shift();
+  }
+
+  /** Бросок: скорость по следу за последние 100 мс. Палец замер перед отпусканием — карта стоит;
+   * слишком резкий бросок не уносит её на другой край света. */
+  private fling(now: number) {
+    const tr = this.trail;
+    const last = tr[tr.length - 1];
+    if (!last || now - last.t > 70) return;
+    let first = last;
+    for (let i = tr.length - 2; i >= 0 && last.t - tr[i].t <= 100; i--) first = tr[i];
+    const ms = last.t - first.t;
+    if (ms < 12) return;
+    const vx = (last.x - first.x) / ms, vy = (last.y - first.y) / ms;
+    const v = Math.hypot(vx, vy);
+    if (v < 0.15) return;
+    const k = Math.min(1, 3.5 / v);
+    this.vel.x = vx * k;
+    this.vel.y = vy * k;
+  }
+
+  private tap(d: Press, now: number) {
+    const { x, y } = d;
+    // двойной тап — приблизить к этому месту
+    if (now - this.lastTap.t < 320 && Math.hypot(x - this.lastTap.x, y - this.lastTap.y) < 30) {
+      this.lastTap.t = 0;
+      this.zoomGoal = { z: this.clampZoom(this.world.scale.x * 1.9), sx: x, sy: y };
+      return;
+    }
+    this.lastTap = { t: now, x, y };
+    if (d.tile < 0) return;
+    // по воде расходятся круги, рыбы разбегаются
+    if (isWater(d.tile) && this.fancy) this.sea?.poke(d.wx, d.wy);
+    this.onTap?.(d.tile);
+  }
+
+  /** Сбросить жест: окно потеряло фокус или карту закрыла вкладка. */
+  private resetInput() {
+    this.pointers.clear();
+    this.down = null;
+    this.pinch = null;
+    this.twoTap = null;
+    this.trail = [];
+    this.vel.x = this.vel.y = 0;
+    this.app.canvas.style.cursor = 'grab';
   }
 
   private hover(tile: number) {

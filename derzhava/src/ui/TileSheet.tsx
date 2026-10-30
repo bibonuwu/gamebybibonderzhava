@@ -1,3 +1,4 @@
+import { useEffect } from 'preact/hooks';
 import {
   ALLY_DISCOUNT, annex, annexCost, annexError, atWar, attackError, buildCost, buildTime, demolish, placeError, reach, startBuild,
   startUpgrade, upgradeError,
@@ -9,6 +10,7 @@ import { fmt } from '../game/format';
 import { getGame } from '../game/state';
 import { COUNTRY_DEFS, REGIONS, REGION_OF, isWater, terrainOf } from '../game/world';
 import { inFallout } from '../game/nuclear';
+import { oilDepletion, REGION_LITH, REGION_OIL } from '../game/resources';
 import { Bar, Flag, RelBar, relText } from './common';
 import { report, setUI, useStore } from './store';
 import type { MapView } from '../map/MapView';
@@ -22,6 +24,13 @@ export function TileSheet({ map }: { map: MapView }) {
   const g = getGame()!;
   const me = g.player;
   const tile = map.selectedTile;
+  // выбранная клетка не должна прятаться под этим листом: offset* — без анимации въезда
+  useEffect(() => {
+    const el = document.querySelector<HTMLElement>('.sheet');
+    if (tile < 0 || !el) return;
+    const top = document.querySelector<HTMLElement>('.topbar')?.offsetHeight ?? 0;
+    map.reveal(tile, { left: el.offsetLeft, right: el.offsetLeft + el.offsetWidth, top: el.offsetTop }, top);
+  }, [tile]);
   if (tile < 0) return null;
   const close = () => { setUI({ tile: -1 }); map.select(-1); };
   if (isWater(tile)) {
@@ -63,6 +72,12 @@ export function TileSheet({ map }: { map: MapView }) {
         {owner !== me && <span>🛡️ оборона {fmt(regionDefense(g, rid).strength)}</span>}
       </div>
       <div style={{ marginTop: '6px' }}><Bar value={rs.pop / cap} /></div>
+      {(REGION_OIL[rid] > 0.05 || REGION_LITH[rid] > 0.05) && (
+        <div class="small" style={{ marginTop: '6px' }}>
+          {REGION_OIL[rid] > 0.05 && <span>⛽ Нефть: <b>{(REGION_OIL[rid] * oilDepletion(g)).toFixed(1)}</b> млн барр./день </span>}
+          {REGION_LITH[rid] > 0.05 && <span>🔋 Литий: <b>{REGION_LITH[rid].toFixed(1)}</b> тыс. т/год</span>}
+        </div>
+      )}
       {inFallout(g, rid) && (
         <div class="small fallout-note">☢️ Радиоактивное заражение ещё {Math.ceil(g.fallout[rid] - g.day)} дн.: люди болеют и уезжают</div>
       )}

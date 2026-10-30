@@ -10,6 +10,23 @@ export const TERRAIN: string = data.terrain;
 export const REGION_OF: Int32Array = Int32Array.from(data.region);
 export const COUNTRY_DEFS = countriesData as unknown as CountryDef[];
 
+/** Род названия страны: Китай, Египет… — мужской, США — множественное число, остальные — женский. */
+const GENDER: Record<string, 'm' | 'pl'> = { cn: 'm', eg: 'm', kz: 'm', pk: 'm', ir: 'm', dz: 'm', us: 'pl' };
+/**
+ * Слово, согласованное с названием страны: vb(i, 'взял') → «взял» / «взяла» / «взяли».
+ * Возвратные глаголы — тоже: vb(i, 'отказался') → «отказалась». Неправильные — тремя формами: vb(i, 'ушёл', 'ушла', 'ушли').
+ */
+export function vb(i: number, m: string, f?: string, pl?: string): string {
+  const g = GENDER[COUNTRY_DEFS[i]?.id] ?? 'f';
+  if (g === 'm') return m;
+  if (f === undefined) {
+    const base = m.endsWith('ся') ? m.slice(0, -2) : m;
+    f = m.endsWith('ся') ? `${base}ась` : `${m}а`;
+    pl = m.endsWith('ся') ? `${base}ись` : `${m}и`;
+  }
+  return g === 'pl' ? pl ?? f : f;
+}
+
 const DIRS_EVEN = [[1, 0], [0, -1], [-1, -1], [-1, 0], [-1, 1], [0, 1]];
 const DIRS_ODD = [[1, 0], [1, -1], [0, -1], [-1, 0], [0, 1], [1, 1]];
 

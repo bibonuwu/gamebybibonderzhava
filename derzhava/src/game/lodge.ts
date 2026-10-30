@@ -14,7 +14,7 @@ import { dropBrother, inOrder } from './order';
 import { allBuildings, banner, log, news, pick, rand, sfx } from './state';
 import type { BuildingType, GameState, GovType, LodgeState, LodgeTask, LogEntry, Personality, TempMod } from './types';
 import { isAggressor, P5, sanctions } from './un';
-import { COUNTRY_DEFS, REGION_OF } from './world';
+import { COUNTRY_DEFS, REGION_OF, vb } from './world';
 
 export const LODGE_NAME = 'Всевидящее око';
 const TERM = 730; // Великого мастера избирают раз в два года
@@ -129,7 +129,7 @@ export function tickLodge(g: GameState) {
     news(g, `📰 Сенсация: правитель страны ${cname(g, k)} — член тайной ложи «${LODGE_NAME}»`, 'info');
     if (rand(g) < 0.35) {
       dropMember(g, k);
-      whisper(g, `после скандала ${cname(g, k)} вышла из ложи`);
+      whisper(g, `после скандала ${cname(g, k)} ${vb(k, 'вышел', 'вышла', 'вышли')} из ложи`);
     }
   }
   if (g.day >= L.nextElection) election(g);
@@ -295,7 +295,7 @@ export function onBrotherWar(g: GameState, a: number, b: number) {
   dropMember(g, a);
   for (const k of botBrothers(g)) addRel(g, a, k, -20);
   if (b === me) log(g, `👁️ Ложа изгнала страну ${cname(g, a)} за нападение на брата — то есть на нас`, 'good');
-  else whisper(g, `${cname(g, a)} подняла меч на брата (${cname(g, b)}) и изгнана из ложи`);
+  else whisper(g, `${cname(g, a)} ${vb(a, 'поднял')} меч на брата (${cname(g, b)}) и ${vb(a, 'изгнан', 'изгнана', 'изгнаны')} из ложи`);
 }
 
 // ---------- поручения ложи ----------
@@ -661,7 +661,7 @@ function joinBot(g: GameState, k: number, inf: number) {
   // новая власть уходит из нашей ложи в «Всевидящее око»
   if (inOrder(g, k)) {
     dropBrother(g, k);
-    log(g, `👁️ После переворота ${cname(g, k)} вышла из ложи «${g.order!.name}» — новая власть служит «${LODGE_NAME}»`, 'bad');
+    log(g, `👁️ После переворота ${cname(g, k)} ${vb(k, 'вышел', 'вышла', 'вышли')} из ложи «${g.order!.name}» — новая власть служит «${LODGE_NAME}»`, 'bad');
   }
   L.members.push(k);
   L.inf[k] = Math.max(L.inf[k] ?? 0, inf);
@@ -830,7 +830,7 @@ function recruit(g: GameState, actor: number) {
   if (!cands.length) return;
   const k = cands.reduce((a, c) => (g.rel[actor][c.idx] > g.rel[actor][a.idx] ? c : a)).idx;
   joinBot(g, k, 10);
-  whisper(g, `${cname(g, actor)} посвятила в ложу правителя страны ${cname(g, k)}`);
+  whisper(g, `${cname(g, actor)} ${vb(actor, 'посвятил')} в ложу правителя страны ${cname(g, k)}`);
 }
 
 function botCompromat(g: GameState, actor: number) {

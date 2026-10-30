@@ -1,9 +1,12 @@
 // Производные показатели стран: доходы, наука, рост населения, стабильность, армия, продовольствие, общество.
 import {
-  BASE_MODS, BIRTH_POLICY, BUDGET_COST, BUDGET_INFO, BUILDER_SPEED, BUILDINGS, BUILDING_TYPES, CORP_YIELD, DIFFICULTY, EDU_SCI, FOOD_PER,
-  GENIUS_FIELDS, GOVS, IMF_RATE, INTEL_COST, INVEST_PER, LEVEL_EFFECT, LODGE_DUES, LODGE_OPEN_STAB, LODGE_TITHE, MIGRATION, MIL_ARMS, ORDER_SHARE,
-  RELIGIONS, SCI_OUT, SECTOR_KEYS, SG_STAB, TECH_BY_ID, type TechMods,
+  ADDITIVE_MODS, BASE_MODS, BIRTH_POLICY, BUDGET_COST, BUDGET_INFO, BUILDER_SPEED, BUILDINGS, BUILDING_TYPES, CORP_YIELD, DIFFICULTY, EDU_SCI,
+  FOOD_PER, GENIUS_FIELDS, GOVS, GREEN_LEVELS, IMF_RATE, INTEL_COST, INVEST_PER, LEVEL_EFFECT, LODGE_DUES, LODGE_OPEN_STAB, LODGE_TITHE, MIGRATION,
+  MIL_ARMS, ORDER_SHARE, RELIGIONS, SAFETY_LEVELS, SCI_OUT, SECTOR_KEYS, SG_STAB, TECH_BY_ID, type TechMods,
 } from './defs';
+import { megaMods } from './megaprojects';
+import { autoPenalty, climateFear, climateFoodLoss, elderly, initLate } from './prosperity';
+import { REGION_LITH, REGION_OIL, resourceStats } from './resources';
 import { allBuildings } from './state';
 import type { BuildingType, Country, GameState, Sector } from './types';
 import { wonderMods } from './wonders';
@@ -74,6 +77,17 @@ export interface CountryStats {
   lodgeTithe: number; // десятина Великому мастеру от взносов братьев
   debtInterest: number; // проценты по госдолгу, 💰/сек
   intelCost: number; // контрразведка, 💰/сек
+  // поздняя игра (prosperity.ts, resources.ts)
+  pensionCost: number; // пенсии сверх обычного, 💰/сек
+  safetyCost: number; // защита от безработицы из-за роботов
+  greenCost: number; // зелёный курс
+  oilProd: number; // добыча нефти
+  oilNeed: number; // нужды в нефти
+  lithProd: number;
+  lithNeed: number;
+  resMoney: number; // продажа излишков сырья (+) или закупка недостающего (−), 💰/сек
+  resShort: number; // на сколько упало производство из-за нехватки сырья в мире (0…0.3)
+  emis: number; // выбросы: доля от мировых в начале эпохи
 }
 
 export let STATS: CountryStats[] = [];
@@ -84,6 +98,8 @@ export let REGION_FARM = new Float64Array(REGIONS.length);
 export let REGION_FORT = new Float64Array(REGIONS.length);
 /** Готовые порты каждой страны (клетки). */
 export let PORT_TILES: number[][] = [];
+/** Нефть и литий ничьих земель — их добыча идёт на мировой рынок. */
+export const FREE_RES = { oil: 0, lith: 0 };
 
 export const regionWeight = (pop: number) => 1 + pop / 2e6;
 const PAIR_KEYS: (string | undefined)[] = new Array(64 * 64);
@@ -117,7 +133,7 @@ function applyMods(m: TechMods, mods: Partial<TechMods> | undefined) {
   if (!mods) return;
   for (const key in mods) {
     const k = key as keyof TechMods;
-    if (k === 'growth' || k === 'stab' || k === 'slots') m[k] += mods[k]!;
+    if (ADDITIVE_MODS.has(k)) m[k] += mods[k]!;
     else m[k] *= mods[k]!;
   }
 }
@@ -204,6 +220,7 @@ export function computeAll(g: GameState) {
       companies: 0, corpValue: 0, sectorUnits: { ...ZERO_SECTORS }, geniuses: 0,
       foodProd: 0, foodCons: 0, foodBuy: 0, foodSell: 0, foodMoney: 0, hunger: 0, sanctions: 0, sanctionLoss: 0,
       lodgeDues: 0, lodgeTithe: 0, debtInterest: 0, intelCost: 0,
+      pensionCost: 0, safetyCost: 0, greenCost: 0, oilProd: 0, oilNeed: 0, lithProd: 0, lithNeed: 0, resMoney: 0, resShort: 0, emis: 0,
     });
   }
   const sanc = sanctionPenalty(g, n);
@@ -214,8 +231,17 @@ export function computeAll(g: GameState) {
   REGION_FARM.fill(0);
   REGION_FORT.fill(0);
   PORT_TILES = Array.from({ length: n }, () => []);
+  const oilCap: number[] = new Array(n).fill(0);
+  const lithCap: number[] = new Array(n).fill(0);
+  FREE_RES.oil = FREE_RES.lith = 0;
   g.regions.forEach((r, id) => {
-    if (r.owner < 0) return;
+    if (r.owner < 0) {
+      FREE_RES.oil += REGION_OIL[id];
+      FREE_RES.lith += REGION_LITH[id];
+      return;
+    }
+    oilCap[r.owner] += REGION_OIL[id];
+    lithCap[r.owner] += REGION_LITH[id];
     const s = stats[r.owner];
     s.regions.push(id);
     s.civPop += r.pop;
@@ -299,7 +325,7 @@ export function computeAll(g: GameState) {
     const s = stats[i];
     if (!c.alive) continue;
     for (const t of BUILDING_TYPES) s.coverage[t] = s.wSum > 0 ? s.coverage[t] / s.wSum : 0;
-    const mods = techMods(c, [...wmods[i], sectorMods(s.sectorUnits)]);
+    const mods = techMods(c, [...wmods[i], sectorMods(s.sectorUnits), ...megaMods(c)]);
     s.mods = mods;
     const crew = c.builders ?? 1;
     s.slots = 1 + crew + mods.slots;
@@ -310,7 +336,8 @@ export function computeAll(g: GameState) {
 
     // продовольствие: урожай, потребление и автоторговля с мировым рынком
     s.foodCons = (s.civPop + (c.soldiers + s.deployed) * 1.5) * FOOD_PER;
-    s.foodProd = agri[i] * mods.food * (0.85 + (0.25 * c.stability) / 100) * (1 - c.weariness / 300) * Math.max(0.2, 1 + modSum(g, c, 'food'));
+    s.foodProd = agri[i] * mods.food * (0.85 + (0.25 * c.stability) / 100) * (1 - c.weariness / 300) * Math.max(0.2, 1 + modSum(g, c, 'food'))
+      * (1 - climateFoodLoss(g, i, mods.climate));
     planFoodTrade(g, c, s);
 
     // стабильность (цель)
@@ -339,6 +366,14 @@ export function computeAll(g: GameState) {
     const civ = Math.max(1, s.civPop);
     if (c.gov === 'dictatorship') parts.push(['Страх перед армией', Math.min(10, (c.soldiers / civ) * 1000)]);
     if (c.armyType === 'conscript' && c.soldiers / civ > 0.01) parts.push(['Призыв', -5]);
+    // цена процветания: избалованность, роботы, тревога за климат
+    if ((c.expect ?? 0) >= 0.5) parts.push(['Ожидания народа', -c.expect!]);
+    const safety = SAFETY_LEVELS[c.safety ?? 0];
+    const jobless = autoPenalty(mods.auto, c.budget.edu) * (1 - safety.cover);
+    if (jobless >= 0.05) parts.push(['Роботы отнимают работу', -jobless]);
+    if (safety.stab) parts.push([safety.name, safety.stab]);
+    const fear = climateFear(g, i);
+    if (fear >= 0.05) parts.push(['Тревога за климат', -fear]);
     const ev = modSum(g, c, 'stab');
     if (ev) parts.push(['События', ev]);
     s.stabParts = parts.filter((p) => Math.abs(p[1]) >= 0.05);
@@ -347,9 +382,20 @@ export function computeAll(g: GameState) {
     // экономика
     const stabF = 0.6 + (0.4 * c.stability) / 100;
     const prodEvent = (1 + modSum(g, c, 'prod')) * (1 - s.sanctions);
-    s.prod = c.baseProd * (1 + BUDGET_INFO.infra.prod[c.budget.infra]) * mods.prod * gov.money * stabF * diff * prodEvent * (1 - c.weariness / 250);
+    const old = elderly(c, mods.aging); // пожилых сверх обычного: рабочих рук меньше
+    s.prod = c.baseProd * (1 + BUDGET_INFO.infra.prod[c.budget.infra]) * mods.prod * gov.money * stabF * diff * prodEvent * (1 - c.weariness / 250) * (1 - 0.3 * old);
     s.taxIncome = (s.civPop / 1e5) * c.tax * s.prod;
     s.factoryIncome = 4 * factoryW[i] * c.baseProd * mods.factory * stabF * diff * prodEvent;
+    // нефть и литий: своя добыча, нужды, закупка; при мировом дефиците производство падает
+    if (g.res) {
+      resourceStats(g, i, s, (s.civPop / 1e5) * s.prod, oilCap[i], lithCap[i]);
+      if (s.resShort > 0) {
+        const k = 1 - s.resShort;
+        s.prod *= k;
+        s.taxIncome *= k;
+        s.factoryIncome *= k;
+      }
+    }
     s.sanctionLoss = ((s.taxIncome + s.factoryIncome) * s.sanctions) / (1 - s.sanctions);
     s.portIncome = 2 * portW[i] * c.baseProd * stabF * diff;
     const budgetShare = BUDGET_COST[c.budget.edu] + BUDGET_COST[c.budget.health] + BUDGET_COST[c.budget.infra] + BUDGET_COST[c.budget.military];
@@ -378,8 +424,12 @@ export function computeAll(g: GameState) {
     s.lodgeDues = brothers.has(i) || order.has(i) ? Math.max(0, s.taxIncome) * LODGE_DUES : 0;
     s.debtInterest = ((c.debt ?? 0) * (c.debtRate ?? 0) + (c.imf?.loan ?? 0) * IMF_RATE) / 365;
     s.intelCost = Math.max(0, s.taxIncome) * INTEL_COST[c.counterIntel ?? 1];
-    s.moneyRate = s.taxIncome + s.factoryIncome + s.portIncome + s.tradeIncome + s.corpIncome + s.investIncome + s.foodMoney
-      - s.budgetCost - s.birthCost - s.upkeepBuildings - s.upkeepArmy - s.lodgeDues - s.debtInterest - s.intelCost;
+    s.pensionCost = Math.max(0, s.taxIncome) * old * 0.7 * (1 - 0.15 * (c.pensionReform ?? 0));
+    s.safetyCost = Math.max(0, s.taxIncome) * safety.cost;
+    s.greenCost = Math.max(0, s.taxIncome) * GREEN_LEVELS[c.green ?? 0].cost;
+    s.moneyRate = s.taxIncome + s.factoryIncome + s.portIncome + s.tradeIncome + s.corpIncome + s.investIncome + s.foodMoney + s.resMoney
+      - s.budgetCost - s.birthCost - s.upkeepBuildings - s.upkeepArmy - s.lodgeDues - s.debtInterest - s.intelCost
+      - s.pensionCost - s.safetyCost - s.greenCost;
 
     // наука
     const brainF = rel.brains * gov.brains * mods.brains * (0.8 + (0.2 * c.stability) / 100) * diff * (1 + modSum(g, c, 'brains'));
@@ -424,11 +474,13 @@ export function computeAll(g: GameState) {
     stats[g.player].moneyRate += share;
   }
 
-  // прирост по регионам
+  // прирост по регионам; при сильном потеплении море наступает на побережья
+  const flood = Math.max(0, (g.climate?.temp ?? 0) - 2) * 0.05;
   g.regions.forEach((r, id) => {
     let gy: number, capMult: number;
     if (r.owner < 0) { gy = 0.8; capMult = 1; }
     else { gy = stats[r.owner].growthYear; capMult = stats[r.owner].mods.cap; }
+    if (flood && REGIONS[id].coastal) capMult *= 1 - flood * (r.owner >= 0 ? stats[r.owner].mods.climate : 1);
     const cap = r.cap0 * (1 + 0.15 * REGION_FARM[id]) * capMult;
     const rd = gy / 100 / 365;
     let d = rd > 0 ? r.pop * rd * Math.max(0, 1 - r.pop / cap) : r.pop * rd;
@@ -441,6 +493,11 @@ export function computeAll(g: GameState) {
     }
   });
   STATS = stats;
+  // эпоха ресурсов и климата начинается с первого пересчёта (в старых сохранениях — с загрузки)
+  if (!g.res || !g.climate) {
+    initLate(g, stats);
+    return computeAll(g);
+  }
   return stats;
 }
 

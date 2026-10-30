@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { DIFFICULTY, GOVS } from '../game/defs';
+import { computeAll } from '../game/economy';
 import { fmt } from '../game/format';
 import { newGame } from '../game/newGame';
 import { allSlots, setActiveSlot, trashInfo, writeSlot } from '../game/save';
@@ -114,6 +115,7 @@ function WarAndPeace({ map }: { map: MapView }) {
 function begin(map: MapView, g: GameState, slot: number, fresh: boolean) {
   if (fresh) writeSlot(slot, g);
   else setActiveSlot(slot);
+  computeAll(g); // показатели — сразу, а у старого сохранения заодно начнётся эпоха ресурсов и климата
   setGame(g);
   map.setGame(g);
   map.focusTile(REGIONS[g.countries[g.player].capital].center, 1.4, prefs.fx);
@@ -248,7 +250,7 @@ function StartScreen({ map }: { map: MapView }) {
         <Card title="📖 Как играть" fold="start-howto">
           <div class="small col" style={{ gap: '4px' }}>
             <div>⏱️ 1 секунда = 1 день. Свернули игру — время стоит. Кнопка ›× в верхней панели ускоряет время до ×3.</div>
-            <div>🗺️ Нажмите на клетку своей страны, чтобы построить завод, университет и другое. Двойной тап — приблизить.</div>
+            <div>🗺️ Нажмите на клетку своей страны, чтобы построить завод, университет и другое. Двойной тап — приблизить, тап двумя пальцами — отдалить.</div>
             <div>📜 Налоги, бюджет и наука — во вкладке «Политика».</div>
             <div>🟢 Зелёная точка на вкладке — там можно что-то сделать прямо сейчас.</div>
             <div>🤝 Заключайте договоры с другими странами — торговля сразу добавит дохода. Или ⚔️ воюйте за их земли.</div>
@@ -256,7 +258,7 @@ function StartScreen({ map }: { map: MapView }) {
             <div>🗳️ В демократии и республике бывают выборы, 🏦 деньги можно занять под процент («Политика»), 🕵️ разведка — во вкладке «Армия».</div>
             <div>📋 Выполняйте задания (кнопка на карте) — за них дают награды.</div>
             <div>❔ Нажмите «?» у любой карточки — там подсказка.</div>
-            <div>⌨️ На ПК: пробел — пауза, 1–6 — вкладки, WASD — карта, Esc — меню.</div>
+            <div>⌨️ На ПК: пробел — пауза, 1–6 — вкладки, WASD — карта (с Shift — быстрее), H — к столице, Esc — меню.</div>
             <div>📐 Основайте свою масонскую ложу и 🌐 вносите резолюции в ООН — «Армия → Ложи» и «Армия → ООН».</div>
             <div>⚠️ Первые полтора года (≈9 минут на скорости ×1) боты не нападают — успейте окрепнуть.</div>
           </div>

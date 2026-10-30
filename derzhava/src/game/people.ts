@@ -1,10 +1,11 @@
 // Голос народа: граждане сами просят и требуют — в зависимости от того, что на самом деле происходит в стране.
 // У каждого требования есть «давление» (0…1): чем хуже дела в этой сфере, тем громче люди. Боты отвечают своему народу тоже.
 import { addRel, bestTileFor, buildCost, buildTime, cname, enemiesOf, neighborCountries, peekPair } from './actions';
-import { FOOD_BASE } from './defs';
+import { FOOD_BASE, PENSION_AGE, SAFETY_LEVELS } from './defs';
 import { computeAll, STATS } from './economy';
 import { fmt } from './format';
 import { buyArms, buyFood, buyQuote, foodDays } from './market';
+import { autoPenalty } from './prosperity';
 import { richTax, richTaxError, richTaxGain } from './society';
 import { log, mapDirty, news, pick, putBuilding, rand, sfx } from './state';
 import type { BuildingType, GameState, LogEntry, TempMod } from './types';
@@ -309,7 +310,9 @@ const DEMANDS: DemandDef[] = [
       `Над городом ${city(g, ci)} висит рыжий смог, дети кашляют. Экологи надели противогазы и встали живой цепью у заводских ворот.`,
       'В реке у заводов всплыла рыба. Экологи требуют фильтры на трубы и штрафы для тех, кто загрязняет.',
     ]),
-    pressure: (g, ci) => (factories(g, ci) > 6 ? Math.min(0.7, (factories(g, ci) - 6) / 14) + (C(g, ci).gov === 'democracy' ? 0.1 : 0) : 0),
+    pressure: (g, ci) => (factories(g, ci) > 6 ? Math.min(0.7, (factories(g, ci) - 6) / 14) + (C(g, ci).gov === 'democracy' ? 0.1 : 0) : 0)
+      // жара и ураганы: о климате говорят все, пока власть не взялась за зелёный курс
+      + Math.max(0, (g.climate?.temp ?? 1.3) - 1.6) * 0.3 * (1 - 0.4 * (C(g, ci).green ?? 0)),
     options: [
       { label: 'Зелёные технологии', hint: (g, ci) => `−${fmt(cost(g, ci, 35))} 💰, стабильность +6 на 200 дн.`,
         apply: (g, ci) => { pay(g, ci, 35); stab(g, ci, 6, 200, 'Зелёные технологии'); },
@@ -429,7 +432,9 @@ const DEMANDS: DemandDef[] = [
       'В городах растёт безработица. Люди просят открыть новые предприятия.',
       `У биржи труда в городе ${city(g, ci)} очередь с самого утра. Молодёжь просит работу, а не пособия.`,
     ]),
-    pressure: (g, ci) => (g.day > 150 && has(g, ci, 'factory') < 0.35 ? 0.4 : 0) + (STATS[ci].moneyRate < 0 ? 0.15 : 0),
+    pressure: (g, ci) => (g.day > 150 && has(g, ci, 'factory') < 0.35 ? 0.4 : 0) + (STATS[ci].moneyRate < 0 ? 0.15 : 0)
+      // роботы и ИИ вытесняют людей с работы
+      + (autoPenalty(STATS[ci].mods.auto, C(g, ci).budget.edu) * (1 - SAFETY_LEVELS[C(g, ci).safety ?? 0].cover)) / 12,
     options: [
       { label: 'Построить завод', hint: (g, ci) => buildHint(g, ci, 'factory'),
         apply: (g, ci) => { if (!peopleBuild(g, ci, 'factory')) { pay(g, ci, 20); mod(g, ci, 'prod', 0.04, 200, 'Новые рабочие места'); } stab(g, ci, 2, 100, 'Новые рабочие места'); },
@@ -575,7 +580,8 @@ const DEMANDS: DemandDef[] = [
       `Бабушки из города ${city(g, ci)} вышли на площадь с самодельными плакатами и термосами с чаем.`,
       'Ветераны труда просят поднять пенсии: «Мы строили эту страну — не забывайте нас».',
     ]),
-    pressure: (g, ci) => (g.day > 200 ? 0.12 + (C(g, ci).budget.health <= 1 ? 0.3 : 0) + (C(g, ci).stability < 50 ? 0.15 : 0) + (broke(g, ci) ? 0.1 : 0) : 0),
+    pressure: (g, ci) => (g.day > 200 ? 0.12 + (C(g, ci).budget.health <= 1 ? 0.3 : 0) + (C(g, ci).stability < 50 ? 0.15 : 0) + (broke(g, ci) ? 0.1 : 0)
+      + Math.max(0, (C(g, ci).aging ?? 0) - PENSION_AGE) * 2.5 : 0),
     options: [
       { label: 'Поднять пенсии', hint: (g, ci) => `−${fmt(cost(g, ci, 30))} 💰, стабильность +5 на 200 дн.`,
         apply: (g, ci) => { pay(g, ci, 30); stab(g, ci, 5, 200, 'Прибавка к пенсии'); },

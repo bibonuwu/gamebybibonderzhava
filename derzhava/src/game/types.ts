@@ -27,7 +27,7 @@ export interface CountryDef {
 }
 
 export interface TempMod {
-  kind: 'stab' | 'growth' | 'prod' | 'brains' | 'food' | 'rich' | 'sci';
+  kind: 'stab' | 'growth' | 'prod' | 'brains' | 'food' | 'rich' | 'sci' | 'emis';
   value: number;
   until: number;
   label: string;
@@ -84,6 +84,17 @@ export interface Country {
   imfBroken?: number; // до этого дня рейтинг ниже: страна сорвала программу МВФ
   counterIntel?: number; // контрразведка 0…3 (spy.ts)
   builders?: number; // уровень строителей 1…10 (actions.ts): места для стройки и её скорость
+  // цена процветания (prosperity.ts)
+  gdp0?: number; // размер экономики в начале эпохи ресурсов: от него считаются нужды в нефти и литии
+  expect?: number; // ожидания народа: привыкнув к хорошей жизни, люди хотят большего (−стабильность)
+  aging?: number; // доля пожилых 0…1
+  pensionReform?: number; // сколько раз поднимали пенсионный возраст
+  green?: number; // зелёный курс 0…2
+  safety?: number; // защита от безработицы из-за роботов 0…2
+  cd?: Record<string, number>; // народная программа, реформа → день, когда снова можно
+  // мегапроекты (megaprojects.ts)
+  mega?: MegaBuild; // идёт стройка этапа
+  megas?: Record<string, number>; // мегапроект → готовых этапов
   aiFlags: {
     reformed?: boolean; lastWarDay?: number; lastProposalDay?: number; lastAnnex?: number; nextAttack?: number;
     prepTarget?: number; prepUntil?: number; // подготовка к войне: закупки и мобилизация
@@ -93,7 +104,62 @@ export interface Country {
     crisis?: number; // сколько дней страна в кризисе (rebels.ts): долгий кризис — распад
     collapsed?: number; // день последнего распада
     lastProxy?: number; // когда бот последний раз начинал войну чужими руками
+    saveMega?: number; // до этого дня бот копит на мегапроект: меньше тратит на стройку и чудеса
   };
+}
+
+/** Этап мегапроекта в стройке. */
+export interface MegaBuild {
+  id: string;
+  stage: number; // какой этап строим (1…3)
+  left: number; // дней до конца
+  total: number;
+  money: number; // вложено (половина вернётся при отмене)
+}
+
+/** Программа развития: богатая страна год вкладывается в бедную, та помнит добро (и голосует в ООН заодно). */
+export interface AidProgram {
+  id: number;
+  from: number;
+  to: number;
+  since: number;
+  until: number;
+  money: number; // сколько вложено
+}
+
+/** Климат планеты (prosperity.ts). */
+export interface ClimateState {
+  temp: number; // потепление, °C к доиндустриальной эпохе
+  e0: number; // мировые выбросы в начале эпохи — мерило
+  emis: number; // мировые выбросы сейчас (1 — как в начале)
+  nextDisaster: number;
+}
+
+/** Мировой рынок стратегического сырья: нефть или литий (resources.ts). */
+export interface ResourceMarket {
+  base: number; // базовая цена единицы (в начале эпохи)
+  k: number; // нужды стран: сколько единиц на единицу экономики
+  price: number;
+  hist: number[];
+  demand: number; // мировая потребность
+  supply: number; // мировая добыча на рынок
+  avail: number; // какая доля нужного импортёрам нашлась на рынке (0…1)
+  sell: number; // какую долю излишков экспортёры смогли продать (0…1)
+  cut: number; // кризис: доля добычи, ушедшая с рынка
+  boom: number; // кризис: рост мирового спроса
+}
+
+export interface ResourceState {
+  oil: ResourceMarket;
+  lith: ResourceMarket;
+  gross0: number; // мировой доход в начале эпохи — от него индекс цен
+  level: number; // индекс мировых цен
+}
+
+/** Мировые потрясения поздней игры: кризисы идут всё чаще (resources.ts). */
+export interface CrisisState {
+  next: number;
+  active: { id: string; until: number }[];
 }
 
 /** Программа МВФ: дешёвый кредит в обмен на строгий бюджет. */
@@ -363,6 +429,7 @@ export interface UNResolution {
   yes?: number[]; // итог: кто «за»
   no?: number[];
   passed?: boolean;
+  lobby?: number[]; // страны, которых игрок уговорил (и щедро отблагодарил) голосовать как он
 }
 
 /** ООН как организация: Генсек и Генассамблея. Дела об агрессии и Совбез — в g.un (un.ts). */
@@ -379,11 +446,12 @@ export interface AssemblyState {
 
 export interface PendingEvent {
   id: string;
-  kind?: 'demand' | 'un' | 'lodge' | 'election' | 'debt'; // требование народа, Совбез ООН, тайная ложа, выборы или финансы, а не случайное событие
+  kind?: 'demand' | 'un' | 'lodge' | 'election' | 'debt' | 'climate'; // требование народа, Совбез ООН, тайная ложа, выборы, финансы или стихия, а не случайное событие
   title: string;
   text: string;
   icon: string;
   target?: number; // страна, о которой событие
+  vals?: number[]; // числа, посчитанные при наступлении (сила стихии, регион)
   options: { label: string; hint: string; idx?: number }[];
 }
 
@@ -460,6 +528,11 @@ export interface GameState {
   elections: ElectionState; // выборы игрока
   intel: IntelState; // разведка
   finance: FinanceState; // мировые финансы
+  climate?: ClimateState; // климат планеты (prosperity.ts)
+  res?: ResourceState; // нефть и литий (resources.ts)
+  crises?: CrisisState; // мировые потрясения (resources.ts)
+  aid?: AidProgram[]; // программы развития (megaprojects.ts)
+  firsts?: Record<string, number>; // космическая гонка: этап → кто сделал его первым
   nextId: number;
   log: LogEntry[];
   proposals: Proposal[];

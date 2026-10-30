@@ -10,7 +10,7 @@ import { fmt } from './format';
 import { initMarket, newGood } from './market';
 import { allBuildings, log, news, pick, rand, sfx } from './state';
 import type { Company, GameState, Genius, Sector } from './types';
-import { COUNTRY_DEFS, REGIONS, REGION_OF, TERRAIN } from './world';
+import { COUNTRY_DEFS, REGIONS, REGION_OF, TERRAIN, vb } from './world';
 
 const OIL = new Set(['sa', 'ru', 'ir', 'dz', 'ng', 'kz', 'ca', 'us', 'mx', 'br', 'id', 'au']);
 const AGRI_W: Record<string, number> = { p: 1, g: 1.2, f: 0.3, d: 0.05, t: 0.1, s: 0, m: 0.15 };
@@ -239,7 +239,7 @@ export function buyCompany(g: GameState, ci: number, id: number): string | null 
   if (ci === g.player) {
     sfx('coins');
     log(g, `💼 Куплена компания «${co.name}» — штаб-квартира переехала к нам`, 'good');
-  } else news(g, `💼 ${cname(g, ci)} купила компанию «${co.name}» у страны ${cname(g, owner)}`, 'info');
+  } else news(g, `💼 ${cname(g, ci)} ${vb(ci, 'купил')} компанию «${co.name}» у страны ${cname(g, owner)}`, 'info');
   computeAll(g);
   return null;
 }
@@ -269,7 +269,7 @@ export function richTax(g: GameState, ci: number): string | null {
   if (ci === g.player) {
     sfx('coins');
     log(g, `💎 Налог на сверхбогатых: +${fmt(gain)} 💰, уехали ${fmt(fled)} миллиардеров`, 'good');
-  } else news(g, `💎 ${cname(g, ci)} ввела налог на сверхбогатых`, 'info');
+  } else news(g, `💎 ${cname(g, ci)} ${vb(ci, 'ввёл', 'ввела', 'ввели')} налог на сверхбогатых`, 'info');
   computeAll(g);
   return null;
 }
@@ -380,7 +380,7 @@ export function hireGenius(g: GameState, ci: number, id: number): string | null 
     sfx('research');
     g.counters.geniuses = (g.counters.geniuses ?? 0) + 1;
     log(g, `🌟 ${gen.name} теперь работает у нас: ${geniusText(gen)}`, 'good');
-  } else if (gen.level === 3) news(g, `🌟 ${cname(g, ci)} пригласила нобелевского лауреата: ${gen.name}`, 'info');
+  } else if (gen.level === 3) news(g, `🌟 ${cname(g, ci)} ${vb(ci, 'пригласил')} нобелевского лауреата: ${gen.name}`, 'info');
   computeAll(g);
   return null;
 }
@@ -444,7 +444,7 @@ function tryPoach(g: GameState, gen: Genius, war: boolean[]) {
   if (e === g.player) {
     sfx('error');
     log(g, `🧑‍🔬 ${gen.name} уезжает в страну ${cname(g, best)}: там спокойнее и платят больше`, 'bad');
-  } else if (gen.level === 3) news(g, `🧑‍🔬 ${cname(g, best)} переманила у страны ${cname(g, e)} учёного ${gen.name}`, 'info');
+  } else if (gen.level === 3) news(g, `🧑‍🔬 ${cname(g, best)} ${vb(best, 'переманил')} у страны ${cname(g, e)} учёного ${gen.name}`, 'info');
 }
 
 function tickGeniuses(g: GameState, war: boolean[]) {

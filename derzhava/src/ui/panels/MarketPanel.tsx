@@ -9,9 +9,12 @@ import {
   buyCompany, buyCompanyError, companiesOf, companyIncome, companyOwner, companyPrice, companyTarget, foundCompany, foundCost,
   foundError, geniusError, geniusPrice, geniusText, grantCost, grantError, hireGenius, hireScientists, sciGrant, sciPrice,
 } from '../../game/society';
+import {
+  activeCrises, CRISIS_BY_ID, freeDeposits, hasDeposit, oilDepletion, REGION_LITH, REGION_OIL, RES_INFO, resPriceRatio, topProducers, type Res,
+} from '../../game/resources';
 import { emit, getGame } from '../../game/state';
 import type { Genius } from '../../game/types';
-import { COUNTRY_DEFS } from '../../game/world';
+import { COUNTRY_DEFS, REGIONS } from '../../game/world';
 import { Bar, Card, Flag, KV, More, Rate, Seg, Tabs } from '../common';
 import { PanelHero } from '../PanelHero';
 import { report, setUI, ui, useStore, type MarketTab } from '../store';
@@ -28,12 +31,14 @@ export function MarketPanel() {
         options={[
           { v: 'food', label: '🌾 Еда' },
           { v: 'arms', label: '🔫 Оружие' },
+          { v: 'res', label: '⛽ Сырьё' },
           { v: 'sci', label: '🧑‍🔬 Учёные' },
           { v: 'corp', label: '🏢 Компании' },
         ]}
       />
       {ui.marketTab === 'food' && <FoodTab />}
       {ui.marketTab === 'arms' && <ArmsTab />}
+      {ui.marketTab === 'res' && <ResTab />}
       {ui.marketTab === 'sci' && <SciTab />}
       {ui.marketTab === 'corp' && <CorpTab />}
     </>
@@ -145,6 +150,90 @@ function FoodTab() {
             <TradeButton key={`s${k}`} sell label={`Продать ${k ? '50' : '25'}% запаса`} cost={sellQuote(m, q)} disabled={q < 1} onClick={() => report(sellFood(g, me, q), `🌾 Продано ${fmt(q)} т`)} />
           ))}
         </div>
+      </Card>
+    </>
+  );
+}
+
+// ---------- сырьё: нефть и литий ----------
+const RES_HINT: Record<Res, string> = {
+  oil: 'Нефть нужна экономике: чем она больше, тем больше нефти. Своя добыча продаётся по мировой цене, недостающее покупаем. Когда нефти в мире не хватает, импортёры недополучают её — производство падает (до −20%). Нефти нужно меньше с зелёным курсом, технологиями «Зелёная энергетика», «Ториевые реакторы», «Термоядерная энергия», «Вакуумные поезда» и мегапроектами «Энергопереход» и «Скоростные магистрали». Старые месторождения понемногу иссякают.',
+  lith: 'Литий и редкие металлы нужны роботам, электромобилям и батареям: спрос растёт с автоматизацией и зелёным курсом, а добыча почти не растёт. Нехватка лития отнимает до 10% производства. Лития нужно меньше с «Переработкой батарей».',
+};
+
+function ResCard({ k }: { k: Res }) {
+  const g = getGame()!;
+  const s = STATS[g.player];
+  const mk = g.res![k];
+  const info = RES_INFO[k];
+  const prod = k === 'oil' ? s.oilProd : s.lithProd;
+  const need = k === 'oil' ? s.oilNeed : s.lithNeed;
+  const bal = prod - need;
+  const ratio = resPriceRatio(g, k);
+  const trend = mk.hist.length > 10 ? mk.price / mk.hist[mk.hist.length - 11] - 1 : 0;
+  const tops = topProducers(g, k);
+  return (
+    <Card title={`${info.icon} ${info.name}`} sub={`цена ×${ratio.toFixed(2)} к обычной`} hint={RES_HINT[k]}>
+      <div class="row between">
+        <span><span class="price-big">💰 {fmt(mk.price)}</span> <span class="small muted">за {k === 'oil' ? '1 млн барр.' : '1 тыс. т'}</span></span>
+        <span class={`num ${trend > 0.005 ? 'down' : trend < -0.005 ? 'up' : 'muted'}`}>
+          {trend > 0 ? '▲' : trend < 0 ? '▼' : '•'} {Math.abs(trend * 100).toFixed(0)}% за 50 дн.
+        </span>
+      </div>
+      <Spark data={mk.hist} color={k === 'oil' ? '#d8b45c' : '#7fd3e8'} />
+      <KV rows={[
+        ['В мире нужно / добывается', <span class={mk.demand > mk.supply ? 'down' : 'up'}>{pct(mk.demand / Math.max(1e-9, mk.supply))}</span>],
+        ...(mk.avail < 0.995 ? [['Импортёрам достаётся', <b class="down">{pct(mk.avail)} нужного</b>] as [string, ComponentChildren]] : []),
+        ['Наша добыча', `${prod.toFixed(1)} ${info.unit}`],
+        ['Нам нужно', `${need.toFixed(1)} ${info.unit}`],
+        [bal >= 0 ? 'Продаём излишки' : 'Докупаем', <Rate v={bal * (bal >= 0 ? mk.sell : mk.avail) * mk.price} />],
+      ]} />
+      {tops.length > 0 && (
+        <More label="Кто добывает">
+          <KV rows={tops.map(([i, v]): [ComponentChildren, ComponentChildren] => [<span><Flag id={i} /> {COUNTRY_DEFS[i].name}</span>, `${v.toFixed(1)} ${info.unit}`])} />
+        </More>
+      )}
+    </Card>
+  );
+}
+
+function ResTab() {
+  const g = getGame()!;
+  const me = g.player;
+  const s = STATS[me];
+  if (!g.res) return <Card><div class="small muted">Мировой рынок сырья открывается…</div></Card>;
+  const crises = activeCrises(g);
+  const mine = s.regions.filter(hasDeposit);
+  const free = freeDeposits(g);
+  const depl = oilDepletion(g);
+  const amounts = (rid: number) => [
+    REGION_OIL[rid] > 0.05 ? `⛽ ${(REGION_OIL[rid] * depl).toFixed(1)}` : '',
+    REGION_LITH[rid] > 0.05 ? `🔋 ${REGION_LITH[rid].toFixed(1)}` : '',
+  ].filter(Boolean).join(' · ');
+  return (
+    <>
+      {crises.length > 0 && (
+        <Card title="🌍 Мировой кризис" sub={`${crises.length}`}>
+          {crises.map((a) => (
+            <div class="small" key={a.id} style={{ marginBottom: '4px' }}>
+              <b>{CRISIS_BY_ID[a.id]?.icon} {CRISIS_BY_ID[a.id]?.name}</b> <span class="muted">· ещё {Math.ceil(a.until - g.day)} дн.</span>
+            </div>
+          ))}
+        </Card>
+      )}
+      {s.resShort > 0.005 && (
+        <Card><div class="small down">⚠️ Сырья в мире не хватает: наше производство −{pct(s.resShort)}. Помогут свои месторождения, зелёная энергетика и переработка.</div></Card>
+      )}
+      <ResCard k="oil" />
+      <ResCard k="lith" />
+      <Card title="🗺️ Наши месторождения" sub={`${mine.length}`} fold="market-deposits">
+        {mine.length === 0 && <div class="small muted">Своих месторождений нет — всё сырьё покупаем на мировом рынке.</div>}
+        {mine.map((rid) => <div class="row between small" key={rid} style={{ marginBottom: '3px' }}><span>{REGIONS[rid].name}</span><span>{amounts(rid)}</span></div>)}
+      </Card>
+      <Card title="🏜️ Ничьи месторождения" sub={`${free.length}`} fold="market-free-deposits"
+        hint="Ничьи земли с нефтью и литием можно купить или занять войсками (вкладка «Армия → Дипломатия → Нейтральные земли»). Когда сырья в мире не хватает, за ними охотятся все.">
+        {free.length === 0 && <div class="small muted">Все месторождения мира уже кому-то принадлежат.</div>}
+        {free.map((rid) => <div class="row between small" key={rid} style={{ marginBottom: '3px' }}><span>{REGIONS[rid].name}</span><span>{amounts(rid)}</span></div>)}
       </Card>
     </>
   );

@@ -5,6 +5,7 @@ import { advise, applyAdvice, applyAllAdvice, GAIN, GOOD, optionFor, sectors, WE
 import { BUILDER_NAMES, BUILDER_SPEED, BUILDERS_MAX, BUILDINGS, BUILDING_TYPES, TECH_BY_ID } from '../../game/defs';
 import { STATS } from '../../game/economy';
 import { fmt } from '../../game/format';
+import { cancelMega, MEGA_BY_ID, megaError, megaNext, MEGAS, megaStages, startMega } from '../../game/megaprojects';
 import { emit, getGame } from '../../game/state';
 import {
   cancelWonder, rivals, startWonder, WONDER_BY_ID, wonderCost, wonderError, wonderOwner, wonderProgress, WONDERS,
@@ -83,6 +84,7 @@ export function BuildPanel({ map }: { map: MapView }) {
         })}
       </Card>
       <Wonders />
+      <Megaprojects />
       <Card title="⬆️ Улучшения" hint="Уровни 2 и 3 открываются технологиями во вкладке «Политика → Наука».">
         {upgradable.length === 0 && <div class="small muted">Пока нечего улучшать.</div>}
         {upgradable.map(({ tile, b, cost }) => (
@@ -271,6 +273,76 @@ function Wonders() {
               <button class="btn sm wonder-btn" disabled={!!err} title={err ?? undefined} onClick={() => report(startWonder(g, me, w.id))}>
                 <span>💰 {fmt(cost.money)}</span>
                 <span>🧠 {fmt(cost.brains)}</span>
+              </button>
+            )}
+          </div>
+        );
+      })}
+    </Card>
+  );
+}
+
+/** Мегапроекты: национальные стройки в три этапа — главная трата больших денег. */
+function Megaprojects() {
+  const g = getGame()!;
+  const me = g.player;
+  const c = g.countries[me];
+  const cur = c.mega;
+  const def = cur ? MEGA_BY_ID[cur.id] : null;
+  const done = MEGAS.reduce((a, m) => a + megaStages(c, m.id), 0);
+  const total = MEGAS.reduce((a, m) => a + m.stages.length, 0);
+  const firsts = g.firsts ?? {};
+  // кто ещё летит в космос прямо сейчас
+  const flying = g.countries.filter((o) => o.alive && o.idx !== me && o.mega?.id === 'space');
+  return (
+    <Card title="🏗️ Мегапроекты" sub={cur && def ? `${def.icon} ${Math.round((1 - cur.left / cur.total) * 100)}%` : `${done} из ${total} этапов`} fold="build-megas"
+      hint="Национальные стройки в три этапа. Цена — в днях нынешнего дохода: чем богаче страна, тем дороже. Одновременно строится один этап, в войну — вдвое медленнее. Отмена вернёт половину денег. Космос — гонка: кто первым высадится на Луну и основает колонию на Марсе, прославится на весь мир.">
+      {cur && def && (
+        <div class="list-item wonder-now">
+          <span class="big-ic">{def.icon}</span>
+          <div class="grow">
+            <div class="row between"><b>{def.stages[cur.stage - 1].name}</b><span class="small muted">{Math.ceil(cur.left)} дн.</span></div>
+            <Bar value={1 - cur.left / cur.total} />
+            {cur.id === 'space' && flying.some((o) => o.mega!.stage === cur.stage) && (
+              <div class="small down" style={{ marginTop: '3px' }}>
+                🚀 Гонка: {flying.filter((o) => o.mega!.stage === cur.stage).map((o) => `${COUNTRY_DEFS[o.idx].name} ${Math.round((1 - o.mega!.left / o.mega!.total) * 100)}%`).join(', ')}
+              </div>
+            )}
+          </div>
+          <button class="btn sm ghost" aria-label="Отменить этап"
+            onClick={() => setUI({ modal: { kind: 'confirm', title: 'Отменить этап?', text: 'Вернётся половина вложенных денег.', danger: true, okText: 'Отменить', ok: () => { cancelMega(g, me); emit(); } } })}>
+            ✕
+          </button>
+        </div>
+      )}
+      {MEGAS.map((m) => {
+        const n = megaStages(c, m.id);
+        const next = megaNext(g, me, m.id);
+        const err = megaError(g, me, m.id);
+        return (
+          <div class="list-item" key={m.id}>
+            <span class="big-ic">{m.icon}</span>
+            <div class="grow">
+              <div><b>{m.name}</b> <span class="small muted">· {n} из {m.stages.length}</span></div>
+              <div class="small muted">{m.desc}</div>
+              {next && cur?.id !== m.id && (
+                <div class="small">
+                  Этап {next.stage}: «{next.st.name}» · {next.st.days} дн.
+                  {next.st.tech && <span class={c.techs.includes(next.st.tech) ? 'up' : 'down'}> · нужна «{TECH_BY_ID[next.st.tech].name}»{c.techs.includes(next.st.tech) ? ' ✓' : ''}</span>}
+                </div>
+              )}
+              {m.id === 'space' && (
+                <div class="small muted">
+                  🌕 Луна: {firsts.moon === undefined ? 'пока никто' : firsts.moon === me ? 'мы первые!' : COUNTRY_DEFS[firsts.moon].name}
+                  {' · '}🔴 Марс: {firsts.mars === undefined ? 'пока никто' : firsts.mars === me ? 'мы первые!' : COUNTRY_DEFS[firsts.mars].name}
+                  {flying.length > 0 && cur?.id !== 'space' && <span class="down"> · летят: {flying.map((o) => COUNTRY_DEFS[o.idx].name).join(', ')}</span>}
+                </div>
+              )}
+            </div>
+            {!next ? <span class="up">✓</span> : cur?.id !== m.id && (
+              <button class="btn sm wonder-btn" disabled={!!err} title={err ?? undefined} onClick={() => report(startMega(g, me, m.id))}>
+                <span>💰 {fmt(next.money)}</span>
+                {next.brains > 0 && <span>🧠 {fmt(next.brains)}</span>}
               </button>
             )}
           </div>

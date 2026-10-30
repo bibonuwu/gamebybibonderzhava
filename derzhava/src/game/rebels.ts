@@ -15,7 +15,7 @@ import { isNuclear } from './nuclear';
 import { counterOf, netOf, plant, plantError, watched } from './spy';
 import { banner, fx, log, mapDirty, news, rand, sfx } from './state';
 import type { GameState, Personality, Rebellion } from './types';
-import { REGIONS, hexDist } from './world';
+import { REGIONS, hexDist, vb } from './world';
 
 const CLASH_GAP = 30; // дней между стычками с гарнизоном
 const WINS_TO_SECEDE = 2;
@@ -192,7 +192,7 @@ function expose(g: GameState, r: Rebellion) {
     log(g, `🕵️ Раскрыто: повстанцев в регионе ${rname(r.region)} вооружает ${cname(g, r.sponsor)}! Война с ней теперь будет справедливой`, 'war');
   } else if (r.sponsor === me) {
     sfx('alarm');
-    log(g, `🕵️ Наш след раскрыт: ${cname(g, r.country)} узнала, кто вооружает её мятежников (отношения −25)`, 'bad');
+    log(g, `🕵️ Наш след раскрыт: ${cname(g, r.country)} ${vb(r.country, 'узнал')}, кто вооружает ${vb(r.country, 'его', 'её', 'их')} мятежников (отношения −25)`, 'bad');
   } else news(g, `🕵️ Скандал: ${cname(g, r.sponsor)} тайно вооружает мятежников в стране ${cname(g, r.country)}`, 'war');
 }
 

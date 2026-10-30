@@ -8,6 +8,7 @@ import { computeAll, STATS } from './economy';
 import { fmt, fmtDays } from './format';
 import { banner, log, news, rand, sfx } from './state';
 import type { BudgetKey, Country, GameState, TempMod } from './types';
+import { vb } from './world';
 
 export const RATINGS = ['AAA', 'AA', 'A', 'BBB', 'BB', 'B', 'CCC', 'D'];
 const STEPS = [85, 75, 65, 55, 45, 35]; // баллы для AAA…B, ниже — CCC
@@ -139,7 +140,7 @@ export function joinImf(g: GameState, i: number): string | null {
     sfx('treaty');
     log(g, `🏦 Программа МВФ: +${fmt(loan)} 💰 под ${pct(IMF_RATE)} на 2 года. Налог не ниже ${pct(IMF_TAX)}, расходы не выше «${BUDGET_LEVELS[IMF_BUDGET]}»`, 'good', false);
     banner({ icon: '🏦', title: 'Программа МВФ', text: `+${fmt(loan)} 💰 под ${pct(IMF_RATE)} — но бюджет теперь под присмотром`, kind: 'good' });
-  } else news(g, `🏦 ${cname(g, i)} получила кредит МВФ и затягивает пояса`, 'info');
+  } else news(g, `🏦 ${cname(g, i)} ${vb(i, 'получил')} кредит МВФ и затягивает пояса`, 'info');
   computeAll(g);
   return null;
 }

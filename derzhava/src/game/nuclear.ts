@@ -7,7 +7,7 @@ import { fmt } from './format';
 import { fx, log, mapDirty, news, rand, removeBuilding, sfx } from './state';
 import type { GameState, Missile } from './types';
 import { wonderOwner } from './wonders';
-import { REGIONS } from './world';
+import { REGIONS, vb } from './world';
 
 export const BOMB_TECH = 'nuclear_bomb';
 export const THERMO_TECH = 'thermonuclear';
@@ -107,7 +107,7 @@ function finishNuke(g: GameState, ci: number) {
     sfx('nuke');
     log(g, `☢️ Ядерное испытание в регионе ${REGIONS[site].name} прошло успешно! Мир встревожен, но напасть на нас теперь побоятся`, 'good');
   } else {
-    news(g, `☢️ ${cname(g, ci)} провела первое ядерное испытание`, 'war');
+    news(g, `☢️ ${cname(g, ci)} ${vb(ci, 'провёл', 'провела', 'провели')} первое ядерное испытание`, 'war');
   }
 }
 
@@ -133,7 +133,7 @@ function finishHBomb(g: GameState, ci: number) {
     sfx('nuke');
     log(g, `💥 Испытание термоядерной бомбы над регионом ${REGIONS[site].name}: вспышку видели за тысячу километров, гриб поднялся на 60 км. Мир в ужасе`, 'good');
   } else {
-    news(g, `💥 ${cname(g, ci)} испытала термоядерную бомбу`, 'war');
+    news(g, `💥 ${cname(g, ci)} ${vb(ci, 'испытал')} термоядерную бомбу`, 'war');
   }
 }
 
@@ -171,7 +171,7 @@ export function launchNuke(g: GameState, ci: number, rid: number, retaliation = 
     log(g, `🚀 ${retaliation ? 'Ответный удар! ' : ''}${hb ? 'Термоядерная ракета' : 'Ракета'} летит на ${where}. Подлёт через ${FLIGHT_DAYS} дн.`, 'war');
   } else if (victim === g.player) {
     sfx('siren');
-    log(g, `🚨 Ракетное нападение! ${cname(g, ci)} выпустила ${hb ? 'термоядерную ракету' : 'ядерную ракету'} по региону ${where}. Подлёт через ${FLIGHT_DAYS} дн.`, 'war');
+    log(g, `🚨 Ракетное нападение! ${cname(g, ci)} ${vb(ci, 'выпустил')} ${hb ? 'термоядерную ракету' : 'ядерную ракету'} по региону ${where}. Подлёт через ${FLIGHT_DAYS} дн.`, 'war');
     if (isNuclear(g, g.player)) log(g, '☢️ Наш арсенал готов к ответному удару — вкладка «Армия»', 'war', false);
   } else {
     news(g, `🚀 ${cname(g, ci)} ${retaliation ? 'наносит ответный' : 'нанесла'} ${hb ? 'термоядерный' : 'ядерный'} удар по стране ${cname(g, victim)}`, 'war');

@@ -8,7 +8,7 @@ import { lodgeShield } from './lodge';
 import { fmt } from './format';
 import { banner, log, news, rand, sfx } from './state';
 import type { GameState, Personality, UNCase, UNVote } from './types';
-import { COUNTRY_DEFS, REGIONS } from './world';
+import { COUNTRY_DEFS, REGIONS, vb } from './world';
 
 /** Постоянные члены Совбеза — у них право вето. */
 export const P5 = ['us', 'ru', 'cn', 'gb', 'fr'].map((id) => COUNTRY_DEFS.findIndex((d) => d.id === id)).filter((i) => i >= 0);
@@ -125,8 +125,8 @@ export function openCase(g: GameState, a: number, b: number, treachery: boolean)
   });
   const how = treachery ? ', вероломно нарушив пакт' : '';
   if (a === g.player) log(g, `🌐 Мир осуждает наше нападение на ${cname(g, b)}${how}. Совбез ООН соберётся через ${VOTE_DAYS} дн.`, 'bad');
-  else if (b === g.player) log(g, `🌐 ${cname(g, a)} напала на нас без причины${how} — созван Совбез ООН`, 'war', false);
-  else news(g, `🌐 Экстренное заседание Совбеза ООН: ${cname(g, a)} напала на ${cname(g, b)}${how}`, 'war');
+  else if (b === g.player) log(g, `🌐 ${cname(g, a)} ${vb(a, 'напал')} на нас без причины${how} — созван Совбез ООН`, 'war', false);
+  else news(g, `🌐 Экстренное заседание Совбеза ООН: ${cname(g, a)} ${vb(a, 'напал')} на ${cname(g, b)}${how}`, 'war');
 }
 
 /** a сама объявила войну агрессору x — она в коалиции: воюет, пока агрессия не прекратится. */
@@ -244,7 +244,7 @@ function resolve(g: GameState, cs: UNCase) {
   const n = r.coalition.length;
   const text = mandate
     ? `Резолюция против страны ${A} принята: ${n ? `${countriesN(n)} ${one(n) ? 'вступает' : 'вступают'} в войну, ` : ''}${sanc}, эмбарго на оружие, ${B} получит помощь`
-    : `${cs.veto === me ? 'Мы наложили' : `${cname(g, cs.veto!)} наложила`} вето на резолюцию против страны ${A}. Генассамблея ООН осудила агрессию: ${sanc}, ${B} получит помощь`;
+    : `${cs.veto === me ? 'Мы наложили' : `${cname(g, cs.veto!)} ${vb(cs.veto!, 'наложил')}`} вето на резолюцию против страны ${A}. Генассамблея ООН осудила агрессию: ${sanc}, ${B} получит помощь`;
   if (b === me) {
     sfx('treaty');
     log(g, `🌐 ${text}`, 'good', false);
